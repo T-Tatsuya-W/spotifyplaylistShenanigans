@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Approximate Valence/Energy via Essentia.js (Preview-based)</title>
+<title>Spotify Playlist – Simple Loader</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
@@ -12,13 +12,10 @@
   th { background: #f2f2f2; }
   .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
   .muted { color:#666; font-size:12px; }
-  .ok { color:#0a7f2e; }
-  .err { color:#b00020; }
-  pre { background:#f6f8fa; padding:10px; border-radius:6px; overflow:auto; }
 </style>
 </head>
 <body>
-<h2>Preview-based Valence/Energy (Essentia.js)</h2>
+<h2>Spotify Playlist – Simple Loader</h2>
 <div>Status: <span id="status">Not logged in</span></div>
 <div class="row">
   <button id="loginBtn">Login with Spotify</button>
@@ -32,12 +29,7 @@
 </div>
 
 <div id="output"></div>
-<div id="debug"></div>
 
-<!-- TODO: include Essentia.js (WASM + JS). Example (adjust to your build/CDN):
-<script src="path/to/essentia.js"></script>
-<script src="path/to/essentia.wasm.js"></script>
--->
 <script>
 /* ---------- CONFIG ---------- */
 const CLIENT_ID = "7e36be9f10ef4de09e938b5c787adf42";
@@ -104,71 +96,10 @@ async function fetchPlaylistTracks(playlistId){
   return items.map(it=>it.track).filter(t=>t && t.id);
 }
 
-/* ---------- Web Audio decode ---------- */
-async function decodePreviewToPCM(previewUrl){
-  if(!previewUrl) throw new Error("No preview_url");
-  const resp = await fetch(previewUrl);
-  if(!resp.ok) throw new Error("Failed to fetch preview: "+resp.status);
-  const arr = await resp.arrayBuffer();
-  const actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-  const audioBuf = await actx.decodeAudioData(arr);
-  // mono mixdown
-  const ch0 = audioBuf.getChannelData(0);
-  let pcm = ch0;
-  if (audioBuf.numberOfChannels > 1) {
-    const ch1 = audioBuf.getChannelData(1);
-    pcm = new Float32Array(ch0.length);
-    for (let i=0;i<ch0.length;i++) pcm[i] = 0.5*(ch0[i]+ch1[i]);
-  }
-  return { pcm, sampleRate: audioBuf.sampleRate };
-}
-
-/* ---------- Essentia-based analysis ---------- */
-/* NOTE: Replace the calls inside analyzePCM() with the exact Essentia.js API your build exposes.
-   If MusicExtractor exists, prefer that. Otherwise, run RhythmExtractor2013, KeyExtractor, RMS, SpectralCentroid, Flux, etc., and compute means. */
-async function analyzePCM(pcm, sampleRate){
-  // Pseudo-code placeholders — adjust to your Essentia.js API:
-  // const ess = await EssentiaWASM(); // e.g., await EssentiaWASM(); then new Essentia(ess)
-  // If MusicExtractor is available:
-  // const me = ess.MusicExtractor({hopSize:1024, frameSize:2048, profile:'music'});
-  // const res = me(pcm, sampleRate);
-  // const bpm = res.tempo; const mode = res.key_key.includes("major") ? "major" : "minor";
-  // const rms = res.average_loudness_rms; const centroid = res.spectral_centroid.mean; const flux = res.spectral_flux.mean; const pulse = res.pulse_clarity;
-
-  // Since we can’t guarantee the exact API here, let’s simulate a structure you’ll fill from Essentia:
-  const features = {
-    bpm: 120,                 // <-- fill from RhythmExtractor2013 or MusicExtractor
-    mode: "major",            // <-- from KeyExtractor or MusicExtractor ("major"/"minor")
-    meanRMS: 0.08,            // <-- from RMS over frames (mean)
-    meanFlux: 0.20,           // <-- average spectral flux
-    centroidHz: 2500,         // <-- average spectral centroid in Hz
-    pulseClarity: 0.6,        // <-- 0–1
-    peakRMSratio: 5.0         // <-- peak / rms (optional)
-  };
-  return features;
-}
-
-/* ---------- Mapping to energy/valence ---------- */
-function clamp(x,a=0,b=1){ return Math.max(a, Math.min(b, x)); }
-function mapScores(f){
-  const normRMS = clamp(f.meanRMS / 0.2);
-  const normTempo = clamp((f.bpm - 60) / 120);
-  const normFlux = clamp(f.meanFlux / 0.30);
-  const normPeakRMS = clamp(( (f.peakRMSratio||4) - 3 ) / 7);
-  const normCentroid = clamp((f.centroidHz||0) / 8000);
-  const pulse = clamp(f.pulseClarity||0);
-
-  const modeVal = (f.mode === "major") ? 1.0 : 0.0;
-
-  const energy = clamp( 0.35*normRMS + 0.35*normTempo + 0.25*normFlux + 0.05*normPeakRMS );
-  const valence = clamp( 0.45*modeVal + 0.30*normCentroid + 0.20*pulse - 0.15*0 /* roughness if you add it */);
-
-  return { energy, valence };
-}
-
-/* ---------- UI ---------- */
+/* ---------- UI helpers ---------- */
 function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]))}
 
+/* ---------- App ---------- */
 (async function init(){
   await completeLogin();
   const status = document.getElementById("status");
@@ -179,7 +110,14 @@ function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;","
   const output = document.getElementById("output");
 
   loginBtn.onclick = beginLogin;
-  logoutBtn.onclick = () => { sessionStorage.clear(); status.textContent="Logged out"; playlistSelect.innerHTML=""; playlistSelect.disabled=true; loadBtn.disabled=true; output.innerHTML=""; };
+  logoutBtn.onclick = () => {
+    sessionStorage.clear();
+    status.textContent="Logged out";
+    playlistSelect.innerHTML="";
+    playlistSelect.disabled=true;
+    loadBtn.disabled=true;
+    output.innerHTML="";
+  };
 
   if(token()){
     status.textContent = "Logged in (scopes: "+(sessionStorage.getItem("scopes")||"")+")";
@@ -198,56 +136,33 @@ function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;","
     status.textContent = "Loading tracks…";
     try{
       const tracks = await fetchPlaylistTracks(pid);
+
       let html = `<table><tr>
-        <th>#</th><th>Track</th><th>Artist(s)</th><th>Preview</th>
-        <th>Energy</th><th>Valence</th><th>Action</th><th>Msg</th>
+        <th>#</th><th>Track</th><th>Artist(s)</th><th>Action</th>
       </tr>`;
       tracks.forEach((t,i)=>{
         const artists = t.artists.map(a=>a.name).join(", ");
-        const hasPrev = !!t.preview_url;
-        html += `<tr id="row-${t.id}">
+        html += `<tr>
           <td>${i+1}</td>
           <td>${escapeHtml(t.name)}</td>
           <td>${escapeHtml(artists)}</td>
-          <td>${hasPrev ? `<audio src="${t.preview_url}" controls preload="none"></audio>` : `<span class="muted">no preview</span>`}</td>
-          <td id="ene-${t.id}"></td>
-          <td id="val-${t.id}"></td>
-          <td>${hasPrev ? `<button data-id="${t.id}" data-url="${t.preview_url}" class="analyzeBtn">Analyze</button>` : ''}</td>
-          <td id="msg-${t.id}" class="muted">${hasPrev ? '—' : 'No preview: cannot analyze'}</td>
+          <td><button class="actionBtn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-artists="${escapeHtml(artists)}">Do Action</button></td>
         </tr>`;
       });
       html += `</table>`;
       output.innerHTML = html;
       status.textContent = `Loaded ${tracks.length} tracks.`;
 
-      // Wire analyze buttons
-      document.querySelectorAll(".analyzeBtn").forEach(btn=>{
-        btn.onclick = async (ev)=>{
-          const id = ev.currentTarget.getAttribute("data-id");
-          const url = ev.currentTarget.getAttribute("data-url");
-          const msgEl = document.getElementById(`msg-${id}`);
-          const eneEl = document.getElementById(`ene-${id}`);
-          const valEl = document.getElementById(`val-${id}`);
-          msgEl.textContent = "Downloading preview…";
-          msgEl.className = "muted";
-          eneEl.textContent = ""; valEl.textContent = "";
-          try {
-            const { pcm, sampleRate } = await decodePreviewToPCM(url);
-            msgEl.textContent = "Analyzing…";
-            // TODO: initialize/load Essentia.js once globally, reuse instance here.
-            const feats = await analyzePCM(pcm, sampleRate); // <-- fill with real Essentia calls
-            const scores = mapScores(feats);
-            eneEl.textContent = scores.energy.toFixed(2);
-            valEl.textContent = scores.valence.toFixed(2);
-            msgEl.textContent = "OK";
-            msgEl.className = "ok";
-          } catch (e) {
-            console.error(e);
-            msgEl.textContent = e.message || "Error";
-            msgEl.className = "err";
-          }
+      // Wire the placeholder action buttons
+      document.querySelectorAll(".actionBtn").forEach(btn=>{
+        btn.onclick = (ev)=>{
+          const name = ev.currentTarget.getAttribute("data-name");
+          const artists = ev.currentTarget.getAttribute("data-artists");
+          status.textContent = `Ready: ${name} — ${artists}`;
+          // later: replace this with your API call, keep the same data attributes
         };
       });
+
     }catch(e){
       status.textContent = "Error loading tracks: "+e.message;
     }

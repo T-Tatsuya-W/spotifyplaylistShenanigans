@@ -1,5 +1,10 @@
 # spotifyplaylistShenanigans
 
+soundstat api key
+7V0g5v0juPzYV7v-ZGE3lOC0_5RTavpB2Z794M2Hl-U
+
+
+spot client ID
 7e36be9f10ef4de09e938b5c787adf42
 https://t-tatsuya-w.github.io/spotifyplaylistShenanigans/
 
