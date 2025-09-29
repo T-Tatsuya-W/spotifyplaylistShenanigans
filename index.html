@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Spotify Playlist Features Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: sans-serif; margin: 24px; }
+    button, select { padding: 8px 12px; margin: 6px 0; }
+    table { border-collapse: collapse; margin-top: 20px; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+    th { background: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <h2>Spotify Playlist Features Viewer</h2>
+  <p>Status: <span id="status">Not logged in</span></p>
+  <button id="loginBtn">Login with Spotify</button>
+  <button id="logoutBtn">Logout</button>
+
+  <hr/>
+
+  <label for="playlistSelect">Choose one of your playlists:</label><br>
+  <select id="playlistSelect" disabled></select>
+  <button id="loadBtn" disabled>Load Playlist</button>
+
+  <div id="output"></div>
+
+<script>
+/* ---------- CONFIG ---------- */
+const CLIENT_ID = "edde17490417422ca1015d1d8b2459ec";   // replace with your Spotify Client ID
+const REDIRECT_URI = "http://localhost:8000/"; // must exactly match Spotify Dashboard setting
+
+/* ---------- PKCE OAuth helpers ---------- */
+async function sha256(str) {
+  const buf = new TextEncoder().encode(str);
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function randomString(len=64) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  return Array.from(crypto.getRandomValues(new Uint8Array(len)))
+    .map(x => chars[x % chars.length]).join('');
+}
+async function beginLogin() {
+  const verifier = randomString(64);
+  const challenge = await sha256(verifier);
+  sessionStorage.setItem('verifier', verifier);
+  const scopes = "playlist-read-private playlist-read-collaborative";
+  const authUrl = new URL("https://accounts.spotify.com/authorize");
+  authUrl.searchParams.set("response_type","code");
+  authUrl.searchParams.set("client_id", CLIENT_ID);
+  authUrl.searchParams.set("scope", scopes);
+  authUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+  authUrl.searchParams.set("code_challenge_method","S256");
+  authUrl.searchParams.set("code_challenge", challenge);
+  window.location = authUrl.toString();
+}
+async function completeLogin() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.get("code")) return;
+  const code = params.get("code");
+  const verifier = sessionStorage.getItem("verifier");
+  const body = new URLSearchParams({
+    grant_type:"authorization_code",
+    code, redirect_uri:REDIRECT_URI,
+    client_id:CLIENT_ID,
+    code_verifier:verifier
+  });
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method:"POST",
+    headers:{"Content-Type":"application/x-www-form-urlencoded"},
+    body
+  });
+  const data = await res.json();
+  console.log("Token response:", data);
+  if (data.access_token) {
+    sessionStorage.setItem("access_token", data.access_token);
+    sessionStorage.setItem("scopes", data.scope);
+    document.getElementById("status").textContent =
+      "Logged in (scopes: " + data.scope + ")";
+    history.replaceState({}, document.title, location.pathname);
+  } else {
+    document.getElementById("status").textContent = "Login failed";
+    console.error("Login failed:", data);
+  }
+}
+function getToken() { return sessionStorage.getItem("access_token"); }
+
+/* ---------- Spotify API helpers ---------- */
+async function spFetch(endpointOrUrl) {
+  const token = getToken();
+  const url = endpointOrUrl.startsWith("http")
+    ? endpointOrUrl
+    : "https://api.spotify.com/v1" + endpointOrUrl;
+
+  const res = await fetch(url, { headers:{Authorization:`Bearer ${token}`} });
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("Spotify API error:", res.status, text);
+    throw new Error(`HTTP ${res.status} - ${text}`);
+  }
+  return res.json();
+}
+async function fetchUserPlaylists() {
+  let url = "https://api.spotify.com/v1/me/playlists?limit=50";
+  const all = [];
+  while (url) {
+    const page = await spFetch(url);
+    all.push(...page.items);
+    url = page.next;
+  }
+  return all;
+}
+async function fetchPlaylistFeatures(playlistId) {
+  let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
+  let items = [];
+  while (url) {
+    const page = await spFetch(url);
+    items.push(...page.items);
+    url = page.next; // Spotify gives absolute URL
+  }
+  const tracks = items.map(it => it.track).filter(t => t && t.id);
+  const ids = tracks.map(t => t.id);
+
+  let feats = [];
+  for (let i=0;i<ids.length;i+=100) {
+    const batch = ids.slice(i,i+100);
+    const r = await spFetch(`/audio-features?ids=${batch.join(",")}`);
+    feats.push(...r.audio_features);
+  }
+
+  return tracks.map(t => {
+    const f = feats.find(x => x && x.id === t.id) || {};
+    return {
+      name: t.name,
+      artist: t.artists.map(a=>a.name).join(", "),
+      valence: f.valence,
+      energy: f.energy,
+      tempo: f.tempo,
+      danceability: f.danceability
+    }
+  });
+}
+
+/* ---------- UI logic ---------- */
+(async function init(){
+  await completeLogin();
+
+  if (getToken()) {
+    document.getElementById("status").textContent =
+      "Logged in (scopes: " + (sessionStorage.getItem("scopes") || "unknown") + ")";
+
+    try {
+      const pls = await fetchUserPlaylists();
+      const sel = document.getElementById("playlistSelect");
+      sel.innerHTML = pls.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+      sel.disabled = false;
+      document.getElementById("loadBtn").disabled = false;
+    } catch (e) {
+      console.error("Error fetching playlists:", e);
+      document.getElementById("status").textContent = "Error fetching playlists";
+    }
+  }
+
+  document.getElementById("loginBtn").onclick = beginLogin;
+  document.getElementById("logoutBtn").onclick = () => {
+    sessionStorage.clear();
+    document.getElementById("status").textContent = "Logged out";
+    document.getElementById("playlistSelect").innerHTML = "";
+    document.getElementById("playlistSelect").disabled = true;
+    document.getElementById("loadBtn").disabled = true;
+    document.getElementById("output").innerHTML = "";
+  };
+
+  document.getElementById("loadBtn").onclick = async () => {
+    const pid = document.getElementById("playlistSelect").value;
+    if (!pid) return alert("Select a playlist first.");
+    document.getElementById("status").textContent = "Fetching playlist...";
+    try {
+      const data = await fetchPlaylistFeatures(pid);
+      let html = `<table><tr><th>Track</th><th>Artist</th><th>Valence</th><th>Energy</th><th>Tempo</th><th>Danceability</th></tr>`;
+      for(const d of data){
+        html += `<tr><td>${d.name}</td><td>${d.artist}</td><td>${d.valence?.toFixed(2)||""}</td><td>${d.energy?.toFixed(2)||""}</td><td>${d.tempo?.toFixed(1)||""}</td><td>${d.danceability?.toFixed(2)||""}</td></tr>`;
+      }
+      html += `</table>`;
+      document.getElementById("output").innerHTML = html;
+      document.getElementById("status").textContent = `Loaded ${data.length} tracks`;
+    } catch (e) {
+      console.error("Error fetching playlist tracks:", e);
+      document.getElementById("status").textContent =
+        "Error fetching playlist: " + e.message;
+    }
+  };
+})();
+</script>
+</body>
+</html>
