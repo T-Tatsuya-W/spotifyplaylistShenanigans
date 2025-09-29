@@ -1,196 +1,255 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Spotify Playlist Features Viewer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: sans-serif; margin: 24px; }
-    button, select { padding: 8px 12px; margin: 6px 0; }
-    table { border-collapse: collapse; margin-top: 20px; width: 100%; font-size: 14px; }
-    th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
-    th { background: #f2f2f2; }
-  </style>
+<meta charset="utf-8" />
+<title>Approximate Valence/Energy via Essentia.js (Preview-based)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+  button, select { padding: 8px 12px; margin: 6px 0; }
+  table { border-collapse: collapse; margin-top: 16px; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: middle; }
+  th { background: #f2f2f2; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .muted { color:#666; font-size:12px; }
+  .ok { color:#0a7f2e; }
+  .err { color:#b00020; }
+  pre { background:#f6f8fa; padding:10px; border-radius:6px; overflow:auto; }
+</style>
 </head>
 <body>
-  <h2>Spotify Playlist Features Viewer</h2>
-  <p>Status: <span id="status">Not logged in</span></p>
+<h2>Preview-based Valence/Energy (Essentia.js)</h2>
+<div>Status: <span id="status">Not logged in</span></div>
+<div class="row">
   <button id="loginBtn">Login with Spotify</button>
   <button id="logoutBtn">Logout</button>
-
-  <hr/>
-
-  <label for="playlistSelect">Choose one of your playlists:</label><br>
+</div>
+<hr/>
+<div class="row">
+  <label>Choose one of your playlists:</label>
   <select id="playlistSelect" disabled></select>
-  <button id="loadBtn" disabled>Load Playlist</button>
+  <button id="loadBtn" disabled>Load Tracks</button>
+</div>
 
-  <div id="output"></div>
+<div id="output"></div>
+<div id="debug"></div>
 
+<!-- TODO: include Essentia.js (WASM + JS). Example (adjust to your build/CDN):
+<script src="path/to/essentia.js"></script>
+<script src="path/to/essentia.wasm.js"></script>
+-->
 <script>
 /* ---------- CONFIG ---------- */
-const CLIENT_ID = "7e36be9f10ef4de09e938b5c787adf42";   // replace with your Spotify Client ID
-const REDIRECT_URI = "https://t-tatsuya-w.github.io/spotifyplaylistShenanigans/"; // must exactly match Spotify Dashboard setting
+const CLIENT_ID = "7e36be9f10ef4de09e938b5c787adf42";
+const REDIRECT_URI = (location.hostname === "127.0.0.1" || location.hostname === "localhost")
+  ? "http://127.0.0.1:8000/"
+  : "https://yourusername.github.io/yourrepo/";
 
-/* ---------- PKCE OAuth helpers ---------- */
-async function sha256(str) {
-  const buf = new TextEncoder().encode(str);
-  const digest = await crypto.subtle.digest('SHA-256', buf);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+/* ---------- PKCE OAuth ---------- */
+async function sha256(s){const b=new TextEncoder().encode(s);const d=await crypto.subtle.digest('SHA-256',b);return btoa(String.fromCharCode(...new Uint8Array(d))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
+function randomString(n=64){const c='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';return Array.from(crypto.getRandomValues(new Uint8Array(n))).map(x=>c[x%c.length]).join('')}
+async function beginLogin(){
+  const verifier=randomString(), challenge=await sha256(verifier);
+  sessionStorage.setItem('verifier',verifier);
+  const scopes="playlist-read-private playlist-read-collaborative";
+  const u=new URL("https://accounts.spotify.com/authorize");
+  u.searchParams.set("response_type","code");
+  u.searchParams.set("client_id",CLIENT_ID);
+  u.searchParams.set("scope",scopes);
+  u.searchParams.set("redirect_uri",REDIRECT_URI);
+  u.searchParams.set("code_challenge_method","S256");
+  u.searchParams.set("code_challenge",challenge);
+  location = u.toString();
 }
-function randomString(len=64) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  return Array.from(crypto.getRandomValues(new Uint8Array(len)))
-    .map(x => chars[x % chars.length]).join('');
-}
-async function beginLogin() {
-  const verifier = randomString(64);
-  const challenge = await sha256(verifier);
-  sessionStorage.setItem('verifier', verifier);
-  const scopes = "playlist-read-private playlist-read-collaborative";
-  const authUrl = new URL("https://accounts.spotify.com/authorize");
-  authUrl.searchParams.set("response_type","code");
-  authUrl.searchParams.set("client_id", CLIENT_ID);
-  authUrl.searchParams.set("scope", scopes);
-  authUrl.searchParams.set("redirect_uri", REDIRECT_URI);
-  authUrl.searchParams.set("code_challenge_method","S256");
-  authUrl.searchParams.set("code_challenge", challenge);
-  window.location = authUrl.toString();
-}
-async function completeLogin() {
-  const params = new URLSearchParams(window.location.search);
-  if (!params.get("code")) return;
-  const code = params.get("code");
-  const verifier = sessionStorage.getItem("verifier");
-  const body = new URLSearchParams({
-    grant_type:"authorization_code",
-    code, redirect_uri:REDIRECT_URI,
-    client_id:CLIENT_ID,
-    code_verifier:verifier
-  });
-  const res = await fetch("https://accounts.spotify.com/api/token", {
-    method:"POST",
-    headers:{"Content-Type":"application/x-www-form-urlencoded"},
-    body
-  });
-  const data = await res.json();
-  console.log("Token response:", data);
-  if (data.access_token) {
-    sessionStorage.setItem("access_token", data.access_token);
-    sessionStorage.setItem("scopes", data.scope);
-    document.getElementById("status").textContent =
-      "Logged in (scopes: " + data.scope + ")";
-    history.replaceState({}, document.title, location.pathname);
+async function completeLogin(){
+  const p=new URLSearchParams(location.search);
+  if(!p.get("code")) return;
+  const code=p.get("code"), verifier=sessionStorage.getItem("verifier");
+  const body=new URLSearchParams({grant_type:"authorization_code", code, redirect_uri:REDIRECT_URI, client_id:CLIENT_ID, code_verifier:verifier});
+  const res=await fetch("https://accounts.spotify.com/api/token",{method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body});
+  const data=await res.json();
+  if(data.access_token){
+    sessionStorage.setItem("access_token",data.access_token);
+    sessionStorage.setItem("scopes",data.scope||"");
+    document.getElementById("status").textContent = "Logged in (scopes: "+(data.scope||"")+")";
+    history.replaceState({},document.title,location.pathname);
   } else {
-    document.getElementById("status").textContent = "Login failed";
+    document.getElementById("status").textContent="Login failed";
     console.error("Login failed:", data);
   }
 }
-function getToken() { return sessionStorage.getItem("access_token"); }
+function token(){return sessionStorage.getItem("access_token");}
 
-/* ---------- Spotify API helpers ---------- */
-async function spFetch(endpointOrUrl) {
-  const token = getToken();
-  const url = endpointOrUrl.startsWith("http")
-    ? endpointOrUrl
-    : "https://api.spotify.com/v1" + endpointOrUrl;
-
-  const res = await fetch(url, { headers:{Authorization:`Bearer ${token}`} });
-  if (!res.ok) {
+/* ---------- Spotify helpers ---------- */
+async function spFetch(pathOrUrl){
+  const t = token();
+  const url = pathOrUrl.startsWith("http") ? pathOrUrl : "https://api.spotify.com/v1"+pathOrUrl;
+  const res = await fetch(url, { headers:{ "Authorization":`Bearer ${t}`, "Accept":"application/json" } });
+  if(!res.ok){
     const text = await res.text();
     console.error("Spotify API error:", res.status, text);
     throw new Error(`HTTP ${res.status} - ${text}`);
   }
   return res.json();
 }
-async function fetchUserPlaylists() {
-  let url = "https://api.spotify.com/v1/me/playlists?limit=50";
-  const all = [];
-  while (url) {
-    const page = await spFetch(url);
-    all.push(...page.items);
-    url = page.next;
-  }
+async function fetchUserPlaylists(){
+  let url="https://api.spotify.com/v1/me/playlists?limit=50"; const all=[];
+  while(url){ const page=await spFetch(url); all.push(...(page.items||[])); url=page.next; }
   return all;
 }
-async function fetchPlaylistFeatures(playlistId) {
-  let url = `https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100`;
-  let items = [];
-  while (url) {
-    const page = await spFetch(url);
-    items.push(...page.items);
-    url = page.next; // Spotify gives absolute URL
-  }
-  const tracks = items.map(it => it.track).filter(t => t && t.id);
-  const ids = tracks.map(t => t.id);
-
-  let feats = [];
-  for (let i=0;i<ids.length;i+=100) {
-    const batch = ids.slice(i,i+100);
-    const r = await spFetch(`/audio-features?ids=${batch.join(",")}`);
-    feats.push(...r.audio_features);
-  }
-
-  return tracks.map(t => {
-    const f = feats.find(x => x && x.id === t.id) || {};
-    return {
-      name: t.name,
-      artist: t.artists.map(a=>a.name).join(", "),
-      valence: f.valence,
-      energy: f.energy,
-      tempo: f.tempo,
-      danceability: f.danceability
-    }
-  });
+async function fetchPlaylistTracks(playlistId){
+  let url=`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100&market=from_token`;
+  const items=[];
+  while(url){ const page=await spFetch(url); items.push(...(page.items||[])); url=page.next; }
+  return items.map(it=>it.track).filter(t=>t && t.id);
 }
 
-/* ---------- UI logic ---------- */
+/* ---------- Web Audio decode ---------- */
+async function decodePreviewToPCM(previewUrl){
+  if(!previewUrl) throw new Error("No preview_url");
+  const resp = await fetch(previewUrl);
+  if(!resp.ok) throw new Error("Failed to fetch preview: "+resp.status);
+  const arr = await resp.arrayBuffer();
+  const actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+  const audioBuf = await actx.decodeAudioData(arr);
+  // mono mixdown
+  const ch0 = audioBuf.getChannelData(0);
+  let pcm = ch0;
+  if (audioBuf.numberOfChannels > 1) {
+    const ch1 = audioBuf.getChannelData(1);
+    pcm = new Float32Array(ch0.length);
+    for (let i=0;i<ch0.length;i++) pcm[i] = 0.5*(ch0[i]+ch1[i]);
+  }
+  return { pcm, sampleRate: audioBuf.sampleRate };
+}
+
+/* ---------- Essentia-based analysis ---------- */
+/* NOTE: Replace the calls inside analyzePCM() with the exact Essentia.js API your build exposes.
+   If MusicExtractor exists, prefer that. Otherwise, run RhythmExtractor2013, KeyExtractor, RMS, SpectralCentroid, Flux, etc., and compute means. */
+async function analyzePCM(pcm, sampleRate){
+  // Pseudo-code placeholders — adjust to your Essentia.js API:
+  // const ess = await EssentiaWASM(); // e.g., await EssentiaWASM(); then new Essentia(ess)
+  // If MusicExtractor is available:
+  // const me = ess.MusicExtractor({hopSize:1024, frameSize:2048, profile:'music'});
+  // const res = me(pcm, sampleRate);
+  // const bpm = res.tempo; const mode = res.key_key.includes("major") ? "major" : "minor";
+  // const rms = res.average_loudness_rms; const centroid = res.spectral_centroid.mean; const flux = res.spectral_flux.mean; const pulse = res.pulse_clarity;
+
+  // Since we can’t guarantee the exact API here, let’s simulate a structure you’ll fill from Essentia:
+  const features = {
+    bpm: 120,                 // <-- fill from RhythmExtractor2013 or MusicExtractor
+    mode: "major",            // <-- from KeyExtractor or MusicExtractor ("major"/"minor")
+    meanRMS: 0.08,            // <-- from RMS over frames (mean)
+    meanFlux: 0.20,           // <-- average spectral flux
+    centroidHz: 2500,         // <-- average spectral centroid in Hz
+    pulseClarity: 0.6,        // <-- 0–1
+    peakRMSratio: 5.0         // <-- peak / rms (optional)
+  };
+  return features;
+}
+
+/* ---------- Mapping to energy/valence ---------- */
+function clamp(x,a=0,b=1){ return Math.max(a, Math.min(b, x)); }
+function mapScores(f){
+  const normRMS = clamp(f.meanRMS / 0.2);
+  const normTempo = clamp((f.bpm - 60) / 120);
+  const normFlux = clamp(f.meanFlux / 0.30);
+  const normPeakRMS = clamp(( (f.peakRMSratio||4) - 3 ) / 7);
+  const normCentroid = clamp((f.centroidHz||0) / 8000);
+  const pulse = clamp(f.pulseClarity||0);
+
+  const modeVal = (f.mode === "major") ? 1.0 : 0.0;
+
+  const energy = clamp( 0.35*normRMS + 0.35*normTempo + 0.25*normFlux + 0.05*normPeakRMS );
+  const valence = clamp( 0.45*modeVal + 0.30*normCentroid + 0.20*pulse - 0.15*0 /* roughness if you add it */);
+
+  return { energy, valence };
+}
+
+/* ---------- UI ---------- */
+function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]))}
+
 (async function init(){
   await completeLogin();
+  const status = document.getElementById("status");
+  const loginBtn = document.getElementById("loginBtn");
+  const logoutBtn = document.getElementById("logoutBtn");
+  const playlistSelect = document.getElementById("playlistSelect");
+  const loadBtn = document.getElementById("loadBtn");
+  const output = document.getElementById("output");
 
-  if (getToken()) {
-    document.getElementById("status").textContent =
-      "Logged in (scopes: " + (sessionStorage.getItem("scopes") || "unknown") + ")";
+  loginBtn.onclick = beginLogin;
+  logoutBtn.onclick = () => { sessionStorage.clear(); status.textContent="Logged out"; playlistSelect.innerHTML=""; playlistSelect.disabled=true; loadBtn.disabled=true; output.innerHTML=""; };
 
-    try {
+  if(token()){
+    status.textContent = "Logged in (scopes: "+(sessionStorage.getItem("scopes")||"")+")";
+    try{
       const pls = await fetchUserPlaylists();
-      const sel = document.getElementById("playlistSelect");
-      sel.innerHTML = pls.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
-      sel.disabled = false;
-      document.getElementById("loadBtn").disabled = false;
-    } catch (e) {
-      console.error("Error fetching playlists:", e);
-      document.getElementById("status").textContent = "Error fetching playlists";
+      playlistSelect.innerHTML = pls.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
+      playlistSelect.disabled = false;
+      loadBtn.disabled = false;
+    }catch(e){
+      status.textContent = "Error fetching playlists: "+e.message;
     }
   }
 
-  document.getElementById("loginBtn").onclick = beginLogin;
-  document.getElementById("logoutBtn").onclick = () => {
-    sessionStorage.clear();
-    document.getElementById("status").textContent = "Logged out";
-    document.getElementById("playlistSelect").innerHTML = "";
-    document.getElementById("playlistSelect").disabled = true;
-    document.getElementById("loadBtn").disabled = true;
-    document.getElementById("output").innerHTML = "";
-  };
-
-  document.getElementById("loadBtn").onclick = async () => {
-    const pid = document.getElementById("playlistSelect").value;
-    if (!pid) return alert("Select a playlist first.");
-    document.getElementById("status").textContent = "Fetching playlist...";
-    try {
-      const data = await fetchPlaylistFeatures(pid);
-      let html = `<table><tr><th>Track</th><th>Artist</th><th>Valence</th><th>Energy</th><th>Tempo</th><th>Danceability</th></tr>`;
-      for(const d of data){
-        html += `<tr><td>${d.name}</td><td>${d.artist}</td><td>${d.valence?.toFixed(2)||""}</td><td>${d.energy?.toFixed(2)||""}</td><td>${d.tempo?.toFixed(1)||""}</td><td>${d.danceability?.toFixed(2)||""}</td></tr>`;
-      }
+  loadBtn.onclick = async () => {
+    const pid = playlistSelect.value; if(!pid) return;
+    status.textContent = "Loading tracks…";
+    try{
+      const tracks = await fetchPlaylistTracks(pid);
+      let html = `<table><tr>
+        <th>#</th><th>Track</th><th>Artist(s)</th><th>Preview</th>
+        <th>Energy</th><th>Valence</th><th>Action</th><th>Msg</th>
+      </tr>`;
+      tracks.forEach((t,i)=>{
+        const artists = t.artists.map(a=>a.name).join(", ");
+        const hasPrev = !!t.preview_url;
+        html += `<tr id="row-${t.id}">
+          <td>${i+1}</td>
+          <td>${escapeHtml(t.name)}</td>
+          <td>${escapeHtml(artists)}</td>
+          <td>${hasPrev ? `<audio src="${t.preview_url}" controls preload="none"></audio>` : `<span class="muted">no preview</span>`}</td>
+          <td id="ene-${t.id}"></td>
+          <td id="val-${t.id}"></td>
+          <td>${hasPrev ? `<button data-id="${t.id}" data-url="${t.preview_url}" class="analyzeBtn">Analyze</button>` : ''}</td>
+          <td id="msg-${t.id}" class="muted">${hasPrev ? '—' : 'No preview: cannot analyze'}</td>
+        </tr>`;
+      });
       html += `</table>`;
-      document.getElementById("output").innerHTML = html;
-      document.getElementById("status").textContent = `Loaded ${data.length} tracks`;
-    } catch (e) {
-      console.error("Error fetching playlist tracks:", e);
-      document.getElementById("status").textContent =
-        "Error fetching playlist: " + e.message;
+      output.innerHTML = html;
+      status.textContent = `Loaded ${tracks.length} tracks.`;
+
+      // Wire analyze buttons
+      document.querySelectorAll(".analyzeBtn").forEach(btn=>{
+        btn.onclick = async (ev)=>{
+          const id = ev.currentTarget.getAttribute("data-id");
+          const url = ev.currentTarget.getAttribute("data-url");
+          const msgEl = document.getElementById(`msg-${id}`);
+          const eneEl = document.getElementById(`ene-${id}`);
+          const valEl = document.getElementById(`val-${id}`);
+          msgEl.textContent = "Downloading preview…";
+          msgEl.className = "muted";
+          eneEl.textContent = ""; valEl.textContent = "";
+          try {
+            const { pcm, sampleRate } = await decodePreviewToPCM(url);
+            msgEl.textContent = "Analyzing…";
+            // TODO: initialize/load Essentia.js once globally, reuse instance here.
+            const feats = await analyzePCM(pcm, sampleRate); // <-- fill with real Essentia calls
+            const scores = mapScores(feats);
+            eneEl.textContent = scores.energy.toFixed(2);
+            valEl.textContent = scores.valence.toFixed(2);
+            msgEl.textContent = "OK";
+            msgEl.className = "ok";
+          } catch (e) {
+            console.error(e);
+            msgEl.textContent = e.message || "Error";
+            msgEl.className = "err";
+          }
+        };
+      });
+    }catch(e){
+      status.textContent = "Error loading tracks: "+e.message;
     }
   };
 })();
