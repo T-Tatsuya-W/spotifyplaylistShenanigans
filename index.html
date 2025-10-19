@@ -29,12 +29,29 @@
     .link { text-decoration: none; }
     .th-sort::after { content: attr(data-sort); margin-left: 6px; font-size: 11px; color: #999; }
     .row-space { justify-content: space-between; }
+    .filter-item { display: flex; flex-direction: column; gap: 8px; }
+    .filter-label { font-weight: 600; font-size: 14px; }
+    .filter-stats { font-size: 12px; color: #666; }
+    .histogram { width: 100%; height: 40px; display: flex; align-items: flex-end; gap: 1px; margin: 6px 0; background: #fafafa; border-radius: 6px; padding: 2px; box-sizing: border-box; }
+    .histogram-bar { flex: 1; background: #0084ff; border-radius: 1px; min-height: 1px; transition: background 0.2s; }
+    .histogram-bar:hover { background: #0066cc; }
+    .range-slider-container { display: flex; flex-direction: column; gap: 6px; }
+    .range-slider { width: 100%; height: 6px; cursor: pointer; }
+    .range-values { display: flex; justify-content: space-between; font-size: 11px; color: #666; }
+    input[type="range"] { width: 100%; cursor: pointer; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
   <h1>Spotify CSV Browser</h1>
   <p class="muted">Load, filter, sort, and browse track data from CSV files.</p>
+
+  <section class="card">
+    <h2>Numeric Filters</h2>
+    <div id="filtersContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 32px;">
+      <!-- Sliders will be inserted here -->
+    </div>
+  </section>
 
   <section class="card">
     <h2>CSV Browser</h2>
@@ -187,6 +204,97 @@ let csvRows = [];
 let viewRows = [];
 let sortState = { key: "Title", dir: "asc" };
 
+const filterState = {
+  BPM: { min: 0, max: 300 },
+  Energy: { min: 0, max: 100 },
+  Dance: { min: 0, max: 100 },
+  Valence: { min: 0, max: 100 }
+};
+
+function getNumericValue(val) {
+  if (val === null || val === undefined || val === "") return null;
+  const n = Number(String(val).replace(/[^0-9.\-]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildHistogram(field, binCount = 10) {
+  const values = csvRows
+    .map(r => getNumericValue(r[field]))
+    .filter(v => v !== null);
+  
+  if (values.length === 0) return { bins: [], min: 0, max: 0 };
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const bins = Array(binCount).fill(0);
+  const range = max - min || 1;
+
+  values.forEach(v => {
+    const binIdx = Math.min(
+      Math.floor(((v - min) / range) * binCount),
+      binCount - 1
+    );
+    bins[binIdx]++;
+  });
+
+  return { bins, min, max };
+}
+
+function renderFilters() {
+  const container = document.getElementById("filtersContainer");
+  container.innerHTML = "";
+
+  const fields = ["BPM", "Energy", "Dance", "Valence"];
+  fields.forEach(field => {
+    const { bins, min, max } = buildHistogram(field, 20);
+    const state = filterState[field];
+    const maxBin = Math.max(...bins, 1);
+
+    const item = document.createElement("div");
+    item.className = "filter-item";
+    item.innerHTML = `
+      <div class="filter-label">${field}</div>
+      <div class="histogram">
+        ${bins.map(count => 
+          `<div class="histogram-bar" style="height: ${(count / maxBin) * 100}%;" title="${count}"></div>`
+        ).join("")}
+      </div>
+      <div class="range-slider-container">
+        <input type="range" class="range-slider filter-min-slider" min="${Math.floor(min)}" max="${Math.ceil(max)}" value="${state.min}" />
+        <input type="range" class="range-slider filter-max-slider" min="${Math.floor(min)}" max="${Math.ceil(max)}" value="${state.max}" />
+      </div>
+      <div class="range-values">
+        <span class="min-display">${state.min}</span>
+        <span class="max-display">${state.max}</span>
+      </div>
+      <div class="filter-stats">Range: ${Math.floor(min)} to ${Math.ceil(max)}</div>
+    `;
+
+    const minSlider = item.querySelector(".filter-min-slider");
+    const maxSlider = item.querySelector(".filter-max-slider");
+    const minDisplay = item.querySelector(".min-display");
+    const maxDisplay = item.querySelector(".max-display");
+
+    minSlider.addEventListener("input", () => {
+      const newMin = Math.min(Number(minSlider.value), state.max);
+      state.min = newMin;
+      minSlider.value = newMin;
+      minDisplay.textContent = newMin;
+      renderTable();
+    });
+
+    maxSlider.addEventListener("input", () => {
+      const newMax = Math.max(Number(maxSlider.value), state.min);
+      state.max = newMax;
+      maxSlider.value = newMax;
+      maxDisplay.textContent = newMax;
+      renderTable();
+    });
+
+    container.appendChild(item);
+  });
+}
+
 function toNumberMaybe(v) {
   if (v === null || v === undefined) return null;
   const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
@@ -214,6 +322,18 @@ function renderTable() {
   } else {
     viewRows = csvRows.slice();
   }
+
+  // Apply numeric range filters
+  viewRows = viewRows.filter(r => {
+    for (const field of ["BPM", "Energy", "Dance", "Valence"]) {
+      const val = getNumericValue(r[field]);
+      if (val !== null) {
+        const state = filterState[field];
+        if (val < state.min || val > state.max) return false;
+      }
+    }
+    return true;
+  });
 
   const { key, dir } = sortState;
   viewRows.sort((a,b) => {
@@ -340,6 +460,7 @@ document.getElementById("loadCsvBtn").addEventListener("click", async () => {
   try {
     const data = await loadCsv(path);
     csvRows = data.map(normalizeHeaders);
+    renderFilters();
     renderTable();
     log(`Loaded ${csvRows.length} rows.`, "ok");
   } catch (e) {
