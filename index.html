@@ -66,8 +66,8 @@
         <table id="csvTable">
           <thead>
             <tr>
-              <!-- Click to sort any of these -->
-              <th data-key="Order" class="sticky th-sort" data-sort="">#</th>
+              <!-- Replace number column with checkbox -->
+              <th class="sticky"><input type="checkbox" id="selectAll" /></th>
               <th data-key="Title" class="sticky th-sort" data-sort="">Title</th>
               <th data-key="Artist" class="sticky th-sort" data-sort="">Artist</th>
               <th data-key="Release" class="sticky th-sort" data-sort="">Release</th>
@@ -76,7 +76,6 @@
               <th data-key="Dance" class="sticky right th-sort" data-sort="">Dance</th>
               <th data-key="Valence" class="sticky right th-sort" data-sort="">Valence</th>
               <th data-key="Spotify_URL" class="sticky">Open</th>
-              <th data-key="Spotify_URI" class="sticky">URI</th>
             </tr>
           </thead>
           <tbody id="csvBody">
@@ -90,25 +89,11 @@
 
 <script>
 /* ========================
-   CONFIG — Fetch secrets dynamically
+   CONFIG — Hard-coded values
 ======================== */
-let CLIENT_ID = "";
-let SCOPES = "";
-let REDIRECT_URI = "";
-
-async function fetchSecrets() {
-  try {
-    const response = await fetch('/api/secrets'); // Replace with your API endpoint
-    if (!response.ok) throw new Error("Failed to fetch secrets");
-    const secrets = await response.json();
-    CLIENT_ID = secrets.SPOTIFY_CLIENT_ID;
-    SCOPES = secrets.SCOPES || "playlist-modify-public playlist-modify-private user-read-private";
-    REDIRECT_URI = secrets.REDIRECT_URI || (window.location.origin + window.location.pathname);
-  } catch (error) {
-    console.error("Error fetching secrets:", error);
-    alert("Failed to load configuration. Please try again later.");
-  }
-}
+const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9"; // Replace with your Spotify Client ID
+const SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
+const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 /* ===== Minimal logger reused from earlier ===== */
 const logEl = document.getElementById("log");
@@ -264,9 +249,8 @@ function renderTable() {
   // rows
   const rowsHtml = viewRows.map(r => {
     const spotifyUrl = r.Spotify_URL || (r.Spotify_Track_ID ? `https://open.spotify.com/track/${r.Spotify_Track_ID}` : "");
-    const uri = r.Spotify_URI || (r.Spotify_Track_ID ? `spotify:track:${r.Spotify_Track_ID}` : "");
     return `<tr>
-      <td class="right">${escapeHTML(r.Order ?? "")}</td>
+      <td><input type="checkbox" class="rowCheckbox" /></td>
       <td>${escapeHTML(r.Title ?? "")}</td>
       <td>${escapeHTML(r.Artist ?? r.Spotify_Artists ?? "")}</td>
       <td>${escapeHTML(r.Release ?? r.Spotify_Release_Date ?? "")}</td>
@@ -275,10 +259,9 @@ function renderTable() {
       <td class="right">${escapeHTML(r.Dance ?? "")}</td>
       <td class="right">${escapeHTML(r.Valence ?? "")}</td>
       <td>${spotifyUrl ? `<a class="link" href="${escapeHTML(spotifyUrl)}" target="_blank" rel="noopener">Open</a>` : ""}</td>
-      <td class="mono">${escapeHTML(uri ?? "")}</td>
     </tr>`;
   }).join("");
-  csvBody.innerHTML = rowsHtml || `<tr><td colspan="10" class="muted">No rows.</td></tr>`;
+  csvBody.innerHTML = rowsHtml || `<tr><td colspan="9" class="muted">No rows.</td></tr>`;
 
   // header arrows
   document.querySelectorAll("thead th.th-sort").forEach(th => {
@@ -342,9 +325,13 @@ document.querySelectorAll("thead th.th-sort").forEach(th => {
   });
 });
 
-/* ===== On load: Fetch secrets and initialize ===== */
+document.getElementById("selectAll").addEventListener("change", (e) => {
+  const checkboxes = document.querySelectorAll(".rowCheckbox");
+  checkboxes.forEach(cb => cb.checked = e.target.checked);
+});
+
+/* ===== On load: Initialize ===== */
 (async function init() {
-  await fetchSecrets();
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const error = params.get("error");
