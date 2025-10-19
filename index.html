@@ -39,10 +39,13 @@
     .range-slider { width: 100%; height: 6px; cursor: pointer; }
     .range-values { display: flex; justify-content: space-between; font-size: 11px; color: #666; }
     input[type="range"] { width: 100%; cursor: pointer; }
+    .scatter-container { margin-top: 20px; display: flex; flex-direction: column; align-items: center; }
+    .scatter-canvas { border: 1px solid #e5e5e5; border-radius: var(--radius); cursor: crosshair; width: 100%; height: auto; max-width: 800px; aspect-ratio: 1; }
+    .scatter-label { font-size: 12px; color: #666; margin-top: 8px; }
+    .scatter-tooltip { position: fixed; background: #333; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 12px; pointer-events: none; white-space: nowrap; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.2); display: none; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
-<body>
   <h1>Spotify CSV Browser</h1>
   <p class="muted">Load, filter, sort, and browse track data from CSV files.</p>
 
@@ -86,6 +89,11 @@
       </div>
     </div>
     <div class="muted" style="margin-top:8px">Tip: click headers to sort; use the filter to search by title, artist, or album. Click any row to select/deselect.</div>
+    <div class="scatter-container">
+      <canvas id="scatterPlot" class="scatter-canvas"></canvas>
+      <div id="scatterTooltip" class="scatter-tooltip"></div>
+      <div class="scatter-label">Energy (x-axis) vs. Valence (y-axis) • Click points to select tracks</div>
+    </div>
   </section>
 
   <section class="card">
@@ -203,6 +211,8 @@ const filterInput = $("#filterInput");
 let csvRows = [];
 let viewRows = [];
 let sortState = { key: "Title", dir: "asc" };
+let pointMap = {}; // Maps point indices to row indices
+let hoveredPointIdx = null;
 
 const filterState = {
   BPM: { min: 0, max: 300 },
@@ -312,6 +322,112 @@ function updateSelectedCount() {
   const checked = document.querySelectorAll(".rowCheckbox:checked").length;
   document.getElementById("selectedCount").textContent = `${checked} track${checked !== 1 ? "s" : ""} selected`;
 }
+function renderScatterPlot() {
+  const canvas = document.getElementById("scatterPlot");
+  const size = Math.min(800, canvas.offsetWidth);
+  canvas.width = size;
+  canvas.height = size;
+  
+  const ctx = canvas.getContext("2d");
+  const padding = 40;
+  const plotSize = size - 2 * padding;
+
+  // Clear canvas
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, size, size);
+
+  // Draw axes
+  ctx.strokeStyle = "#ddd";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, padding);
+  ctx.lineTo(padding, size - padding);
+  ctx.lineTo(size - padding, size - padding);
+  ctx.stroke();
+
+  // Draw axis labels
+  ctx.fillStyle = "#666";
+  ctx.font = "12px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("Energy", size / 2, size - 10);
+  ctx.textAlign = "right";
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText("Valence", -size / 2, 15);
+  ctx.rotate(Math.PI / 2);
+
+  // Draw grid lines and tick labels
+  ctx.strokeStyle = "#f0f0f0";
+  ctx.lineWidth = 1;
+  ctx.fillStyle = "#999";
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "center";
+  for (let i = 0; i <= 100; i += 20) {
+    const x = padding + (i / 100) * plotSize;
+    ctx.beginPath();
+    ctx.moveTo(x, size - padding);
+    ctx.lineTo(x, padding);
+    ctx.stroke();
+    ctx.fillText(i, x, size - padding + 15);
+  }
+
+  ctx.textAlign = "right";
+  for (let i = 0; i <= 100; i += 20) {
+    const y = size - padding - (i / 100) * plotSize;
+    ctx.beginPath();
+    ctx.moveTo(padding, y);
+    ctx.lineTo(size - padding, y);
+    ctx.stroke();
+    ctx.fillText(i, padding - 10, y + 4);
+  }
+
+  // Plot points
+  pointMap = {};
+  let pointIndex = 0;
+  viewRows.forEach((row, idx) => {
+    const energy = getNumericValue(row.Energy);
+    const valence = getNumericValue(row.Valence);
+
+    if (energy !== null && valence !== null) {
+      const x = padding + (energy / 100) * plotSize;
+      const y = size - padding - (valence / 100) * plotSize;
+
+      const isSelected = document.querySelector(`.rowCheckbox[data-idx="${idx}"]`)?.checked || false;
+      const isHovered = hoveredPointIdx === pointIndex;
+      const pointRadius = isSelected || isHovered ? 6 : 4;
+
+      ctx.fillStyle = isSelected ? "#0084ff" : (isHovered ? "#ff6b35" : "#ccc");
+      ctx.beginPath();
+      ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (isSelected || isHovered) {
+        ctx.strokeStyle = isSelected ? "#0066cc" : "#ff4500";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, pointRadius + 2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      pointMap[pointIndex] = { idx, x, y, radius: pointRadius + 2, title: row.Title, artist: row.Artist };
+      pointIndex++;
+    }
+  });
+}
+
+function getPointAtCoords(canvas, mx, my) {
+  Object.entries(pointMap).forEach(([idx, point]) => {
+    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
+    if (dist <= point.radius + 4) {
+      return parseInt(idx);
+    }
+  });
+  return null;
+}
+
+function updateScatterPlot() {
+  renderScatterPlot();
+}
+
 function renderTable() {
   const q = filterInput.value.trim().toLowerCase();
   if (q) {
@@ -348,7 +464,7 @@ function renderTable() {
   const rowsHtml = viewRows.map((r, idx) => {
     const spotifyUrl = r.Spotify_URL || (r.Spotify_Track_ID ? `https://open.spotify.com/track/${r.Spotify_Track_ID}` : "");
     return `<tr data-uri="${escapeHTML(r.Spotify_URI || "")}">
-      <td><input type="checkbox" class="rowCheckbox" /></td>
+      <td><input type="checkbox" class="rowCheckbox" data-idx="${idx}" /></td>
       <td>${escapeHTML(r.Title ?? "")}</td>
       <td>${escapeHTML(r.Artist ?? r.Spotify_Artists ?? "")}</td>
       <td>${escapeHTML(r.Release ?? r.Spotify_Release_Date ?? "")}</td>
@@ -367,7 +483,10 @@ function renderTable() {
   });
 
   document.querySelectorAll(".rowCheckbox").forEach(cb => {
-    cb.addEventListener("change", updateSelectedCount);
+    cb.addEventListener("change", () => {
+      updateSelectedCount();
+      updateScatterPlot();
+    });
   });
 
   document.querySelectorAll("tbody tr").forEach(tr => {
@@ -378,9 +497,12 @@ function renderTable() {
       if (checkbox) {
         checkbox.checked = !checkbox.checked;
         updateSelectedCount();
+        updateScatterPlot();
       }
     });
   });
+
+  updateScatterPlot();
 }
 
 async function loadCsv(path) {
@@ -487,6 +609,86 @@ document.querySelectorAll("thead th.th-sort").forEach(th => {
 document.getElementById("selectAll").addEventListener("change", (e) => {
   document.querySelectorAll(".rowCheckbox").forEach(cb => cb.checked = e.target.checked);
   updateSelectedCount();
+  updateScatterPlot();
+});
+
+document.getElementById("scatterPlot").addEventListener("click", (e) => {
+  const canvas = document.getElementById("scatterPlot");
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // Find closest point
+  let closestIdx = null;
+  let closestDist = Infinity;
+  
+  Object.entries(pointMap).forEach(([_, point]) => {
+    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestIdx = point.idx;
+    }
+  });
+
+  if (closestDist <= 8) {
+    const checkbox = document.querySelector(`.rowCheckbox[data-idx="${closestIdx}"]`);
+    if (checkbox) {
+      checkbox.checked = !checkbox.checked;
+      updateSelectedCount();
+      updateScatterPlot();
+    }
+  }
+});
+
+document.getElementById("scatterPlot").addEventListener("mousemove", (e) => {
+  const canvas = document.getElementById("scatterPlot");
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  let foundIdx = null;
+  let foundPoint = null;
+  let closestDist = Infinity;
+
+  Object.entries(pointMap).forEach(([idx, point]) => {
+    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
+    if (dist < closestDist) {
+      closestDist = dist;
+      if (dist <= 10) {
+        foundIdx = parseInt(idx);
+        foundPoint = point;
+      }
+    }
+  });
+
+  if (foundIdx !== hoveredPointIdx) {
+    hoveredPointIdx = foundIdx;
+    renderScatterPlot();
+  }
+
+  const tooltip = document.getElementById("scatterTooltip");
+  if (foundPoint && closestDist <= 10) {
+    tooltip.textContent = `${foundPoint.title} • ${foundPoint.artist}`;
+    tooltip.style.display = "block";
+    
+    let tooltipX = e.clientX + 12;
+    let tooltipY = e.clientY - 20;
+    
+    // Clamp to viewport
+    tooltipX = Math.max(0, Math.min(tooltipX, window.innerWidth - 250));
+    tooltipY = Math.max(0, tooltipY);
+    
+    tooltip.style.left = tooltipX + "px";
+    tooltip.style.top = tooltipY + "px";
+  } else {
+    tooltip.style.display = "none";
+  }
+});
+
+document.getElementById("scatterPlot").addEventListener("mouseleave", () => {
+  hoveredPointIdx = null;
+  document.getElementById("scatterTooltip").style.display = "none";
+  renderScatterPlot();
 });
 
 (async function init() {

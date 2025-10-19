@@ -19,6 +19,17 @@ A lightweight, static HTML application for browsing and filtering Spotify track 
 - A modern web browser (Chrome, Firefox, Safari, Edge)
 - Your CSV file in the same directory as `index.html` (or adjust the path)
 
+### Local Testing with Python
+
+To test the app locally without authentication issues:
+
+```bash
+cd c:\Users\Toby T Watkinson\SPOT\spotifyplaylistShenanigans
+python3 -m http.server 8000
+```
+
+Then open your browser to `http://localhost:8000`. All CSV features work without login, making this ideal for testing data loading, filtering, sorting, and selection.
+
 ### Setup
 
 1. Clone or download this project
@@ -29,7 +40,7 @@ A lightweight, static HTML application for browsing and filtering Spotify track 
    ├── songs.csv          (or your CSV filename)
    └── README.md
    ```
-3. Open `index.html` in your browser
+3. Open `index.html` in your browser (or use the Python server above)
 4. Enter your CSV path (default: `songs.csv`) and click **Load CSV**
 
 ### CSV Format
