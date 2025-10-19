@@ -10,7 +10,7 @@
     h1, h2 { margin: 0 0 12px; }
     section { margin: 28px 0; }
     button, input { padding: 10px 14px; font-size: 15px; }
-    #log { white-space: pre-wrap; border: 1px solid #ddd; padding: var(--pad); border-radius: var(--radius); margin-top: 12px; font-size: 14px; }
+    #log { white-space: pre-wrap; border: 1px solid #ddd; padding: var(--pad); border-radius: var(--radius); margin-top: 12px; font-size: 14px; max-height: 200px; overflow-y: auto; }
     .ok { color: #087443; } .err { color: #a40000; }
 
     .card { border: 1px solid #e5e5e5; border-radius: var(--radius); padding: var(--pad); }
@@ -28,21 +28,13 @@
     .right { text-align: right; }
     .link { text-decoration: none; }
     .th-sort::after { content: attr(data-sort); margin-left: 6px; font-size: 11px; color: #999; }
+    .row-space { justify-content: space-between; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
   <h1>Spotify CSV Browser</h1>
   <p class="muted">Load, filter, sort, and browse track data from CSV files.</p>
-
-  <section class="card">
-    <h2>Authentication</h2>
-    <div class="row">
-      <button id="loginBtn">Log in with Spotify</button>
-      <span id="authStatus" class="muted"></span>
-    </div>
-    <div id="log" aria-live="polite" style="display:none;"></div>
-  </section>
 
   <section class="card">
     <h2>CSV Browser</h2>
@@ -76,16 +68,28 @@
         </table>
       </div>
     </div>
-    <div class="muted" style="margin-top:8px">Tip: click headers to sort; use the filter to search by title, artist, or album.</div>
+    <div class="muted" style="margin-top:8px">Tip: click headers to sort; use the filter to search by title, artist, or album. Click any row to select/deselect.</div>
   </section>
 
   <section class="card">
-    <h2>Create Playlist</h2>
-    <div class="row">
-      <input id="playlistName" type="text" placeholder="Playlist name" value="PKCE Demo Playlist" />
-      <button id="createPlaylistBtn" disabled>Create & Add Selected Tracks</button>
-      <span id="selectedCount" class="muted">0 tracks selected</span>
+    <h2>Playlist & Sync</h2>
+    <div class="row row-space">
+      <div class="row">
+        <button id="loginBtn">Log in with Spotify</button>
+        <span id="authStatus" class="muted"></span>
+        <span style="margin: 0 8px; color: #ddd;">|</span>
+        <span id="selectedCount" class="muted"></span>
+      </div>
+      <div class="row">
+        <input id="playlistName" type="text" placeholder="Playlist name" value="PKCE Demo Playlist" />
+        <button id="createPlaylistBtn" disabled>Create & Add Selected Tracks</button>
+      </div>
     </div>
+  </section>
+
+  <section class="card">
+    <h2>Log</h2>
+    <div id="log" aria-live="polite" style="display:none;"></div>
   </section>
 
 <script>
@@ -101,6 +105,7 @@ function log(msg, cls="") {
   if (cls) p.className = cls;
   p.textContent = msg;
   logEl.appendChild(p);
+  logEl.scrollTop = logEl.scrollHeight;
 }
 
 function setAuthStatus(msg) {
