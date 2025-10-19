@@ -36,6 +36,15 @@
   <p class="muted">Load, filter, sort, and browse track data from CSV files.</p>
 
   <section class="card">
+    <h2>Authentication</h2>
+    <div class="row">
+      <button id="loginBtn">Log in with Spotify</button>
+      <span id="authStatus" class="muted"></span>
+    </div>
+    <div id="log" aria-live="polite" style="display:none;"></div>
+  </section>
+
+  <section class="card">
     <h2>CSV Browser</h2>
     <div class="row" style="justify-content:space-between;">
       <div class="row">
@@ -70,7 +79,14 @@
     <div class="muted" style="margin-top:8px">Tip: click headers to sort; use the filter to search by title, artist, or album.</div>
   </section>
 
-  <div id="log" aria-live="polite" style="display:none;"></div>
+  <section class="card">
+    <h2>Create Playlist</h2>
+    <div class="row">
+      <input id="playlistName" type="text" placeholder="Playlist name" value="PKCE Demo Playlist" />
+      <button id="createPlaylistBtn" disabled>Create & Add Selected Tracks</button>
+      <span id="selectedCount" class="muted">0 tracks selected</span>
+    </div>
+  </section>
 
 <script>
 const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";
@@ -78,12 +94,17 @@ const SCOPES = "playlist-modify-public playlist-modify-private user-read-private
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const logEl = document.getElementById("log");
+const authStatusEl = document.getElementById("authStatus");
 function log(msg, cls="") {
   logEl.style.display = "block";
   const p = document.createElement("div");
   if (cls) p.className = cls;
   p.textContent = msg;
   logEl.appendChild(p);
+}
+
+function setAuthStatus(msg) {
+  authStatusEl.textContent = msg;
 }
 
 function generateRandomString(length) {
@@ -137,6 +158,22 @@ async function exchangeCodeForToken(code) {
   localStorage.setItem("refresh_token", data.refresh_token || "");
   return data.access_token;
 }
+async function apiFetch(path, options = {}) {
+  const token = localStorage.getItem("access_token");
+  if (!token) throw new Error("No access token.");
+  const resp = await fetch(`https://api.spotify.com/v1${path}`, {
+    ...options,
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  if (resp.status === 401) throw new Error("Unauthorized (token expired?)");
+  const text = await resp.text();
+  try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
+  catch { return { ok: resp.ok, status: resp.status, json: text }; }
+}
 
 const $ = (s) => document.querySelector(s);
 const csvBody = $("#csvBody");
@@ -157,6 +194,10 @@ function escapeHTML(s) {
     .replaceAll(">","&gt;")
     .replaceAll('"',"&quot;")
     .replaceAll("'","&#39;");
+}
+function updateSelectedCount() {
+  const checked = document.querySelectorAll(".rowCheckbox:checked").length;
+  document.getElementById("selectedCount").textContent = `${checked} track${checked !== 1 ? "s" : ""} selected`;
 }
 function renderTable() {
   const q = filterInput.value.trim().toLowerCase();
@@ -179,9 +220,9 @@ function renderTable() {
     return dir === "asc" ? cmp : -cmp;
   });
 
-  const rowsHtml = viewRows.map(r => {
+  const rowsHtml = viewRows.map((r, idx) => {
     const spotifyUrl = r.Spotify_URL || (r.Spotify_Track_ID ? `https://open.spotify.com/track/${r.Spotify_Track_ID}` : "");
-    return `<tr>
+    return `<tr data-uri="${escapeHTML(r.Spotify_URI || "")}">
       <td><input type="checkbox" class="rowCheckbox" /></td>
       <td>${escapeHTML(r.Title ?? "")}</td>
       <td>${escapeHTML(r.Artist ?? r.Spotify_Artists ?? "")}</td>
@@ -198,6 +239,10 @@ function renderTable() {
   document.querySelectorAll("thead th.th-sort").forEach(th => {
     const k = th.dataset.key;
     th.setAttribute("data-sort", k === key ? (dir === "asc" ? "▲" : "▼") : "");
+  });
+
+  document.querySelectorAll(".rowCheckbox").forEach(cb => {
+    cb.addEventListener("change", updateSelectedCount);
   });
 }
 
@@ -223,6 +268,55 @@ function normalizeHeaders(obj) {
   });
   return map;
 }
+
+async function createPlaylistAndAddTracks() {
+  try {
+    const playlistName = document.getElementById("playlistName").value.trim() || "PKCE Demo Playlist";
+    const selectedCheckboxes = document.querySelectorAll(".rowCheckbox:checked");
+    const selectedUris = Array.from(selectedCheckboxes).map(cb => {
+      const tr = cb.closest("tr");
+      return tr.dataset.uri;
+    }).filter(uri => uri && uri.length > 0);
+
+    if (selectedUris.length === 0) {
+      log("No tracks selected.", "err");
+      return;
+    }
+
+    log("Fetching your profile (/me)…");
+    const me = await apiFetch("/me");
+    if (!me.ok) throw new Error(JSON.stringify(me.json));
+    const userId = me.json.id;
+    log(`Hello ${me.json.display_name || userId}!`, "ok");
+
+    log(`Creating playlist "${playlistName}"…`);
+    const newPl = await apiFetch(`/users/${encodeURIComponent(userId)}/playlists`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: playlistName,
+        description: "Created by Spotify CSV Browser",
+        public: false
+      })
+    });
+    if (!newPl.ok) throw new Error(JSON.stringify(newPl.json));
+    const playlistId = newPl.json.id;
+    log(`Created: ${newPl.json.name}`, "ok");
+
+    log(`Adding ${selectedUris.length} track(s) to playlist…`);
+    const addResp = await apiFetch(`/playlists/${playlistId}/tracks`, {
+      method: "POST",
+      body: JSON.stringify({ uris: selectedUris })
+    });
+    if (!addResp.ok) throw new Error(JSON.stringify(addResp.json));
+    log(`Added ${selectedUris.length} track(s) successfully!`, "ok");
+  } catch (e) {
+    log(`Error: ${e.message}`, "err");
+    console.error(e);
+  }
+}
+
+document.getElementById("loginBtn").addEventListener("click", beginLogin);
+document.getElementById("createPlaylistBtn").addEventListener("click", createPlaylistAndAddTracks);
 
 document.getElementById("loadCsvBtn").addEventListener("click", async () => {
   const path = document.getElementById("csvPath").value.trim() || "songs.csv";
@@ -254,6 +348,7 @@ document.querySelectorAll("thead th.th-sort").forEach(th => {
 
 document.getElementById("selectAll").addEventListener("change", (e) => {
   document.querySelectorAll(".rowCheckbox").forEach(cb => cb.checked = e.target.checked);
+  updateSelectedCount();
 });
 
 (async function init() {
@@ -266,12 +361,19 @@ document.getElementById("selectAll").addEventListener("change", (e) => {
       log("Exchanging authorization code for access token…");
       await exchangeCodeForToken(code);
       window.history.replaceState({}, document.title, window.location.pathname);
-      log("Logged in.", "ok");
+      setAuthStatus("✓ Logged in");
+      document.getElementById("createPlaylistBtn").disabled = false;
+      log("Logged in successfully!", "ok");
     } catch (e) {
       log(`Token exchange failed: ${e.message}`, "err");
     }
   } else if (localStorage.getItem("access_token")) {
+    setAuthStatus("✓ Logged in");
+    document.getElementById("createPlaylistBtn").disabled = false;
     log("Token present.", "ok");
+  } else {
+    setAuthStatus("Not logged in");
+    log("Log in to create playlists and add tracks.", "");
   }
 })();
 </script>
