@@ -400,7 +400,7 @@ class PlaylistDatabaseBuilder:
         Main processing function: HTML -> Spotify data -> Database update
         Always processes 'Sort Your Music.html' from current directory
         """
-        html_file_path = "Sort Your Music.html"
+        html_file_path = "Sort Your Music.htm"
         
         try:
             print(f"🚀 Processing latest playlist from Sort Your Music")
