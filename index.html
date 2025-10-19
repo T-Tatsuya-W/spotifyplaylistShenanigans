@@ -2,40 +2,102 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Spotify PKCE Demo – Create Playlist</title>
+  <title>Spotify PKCE + CSV Browser</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
+    :root { --pad: 12px; --radius: 12px; }
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 32px; }
-    button { padding: 10px 14px; margin: 8px 0; font-size: 16px; cursor: pointer; }
-    #log { white-space: pre-wrap; border: 1px solid #ddd; padding: 12px; margin-top: 16px; font-size: 14px; }
+    h1, h2 { margin: 0 0 12px; }
+    section { margin: 28px 0; }
+    button, input { padding: 10px 14px; font-size: 15px; }
+    #log { white-space: pre-wrap; border: 1px solid #ddd; padding: var(--pad); border-radius: var(--radius); margin-top: 12px; font-size: 14px; }
     .ok { color: #087443; } .err { color: #a40000; }
+
+    .card { border: 1px solid #e5e5e5; border-radius: var(--radius); padding: var(--pad); }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .muted { color: #666; font-size: 13px; }
+
+    /* table */
+    .table-wrap { border: 1px solid #e5e5e5; border-radius: var(--radius); overflow: hidden; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    thead th { background: #fafafa; font-weight: 600; text-align: left; border-bottom: 1px solid #eee; padding: 10px; cursor: pointer; user-select: none; }
+    tbody td { border-bottom: 1px solid #f3f3f3; padding: 8px 10px; vertical-align: top; }
+    tbody tr:hover { background: #fffdf7; }
+    .sticky { position: sticky; top: 0; z-index: 1; }
+    .scroll { max-height: 520px; overflow: auto; }
+    .badge { display:inline-block; padding: 2px 8px; border-radius: 999px; border:1px solid #e5e5e5; font-size:12px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .right { text-align: right; }
+    .link { text-decoration: none; }
+    .th-sort::after { content: attr(data-sort); margin-left: 6px; font-size: 11px; color: #999; }
   </style>
+  <!-- Papa Parse for robust CSV parsing (quoted fields, commas, etc.) -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
   <h1>Spotify PKCE Demo</h1>
-  <p>This page logs in with PKCE and creates a playlist with one hard-coded track.</p>
+  <p class="muted">Auth/playlist bits left intact; below is a CSV browser for your tracks. We’re not wiring playlist actions yet.</p>
 
-  <button id="loginBtn">1) Log in with Spotify</button><br/>
-  <button id="createBtn" disabled>2) Create demo playlist</button>
+  <!-- ===== EXISTING AUTH CONTROLS (unchanged) ===== -->
+  <section class="card">
+    <h2>1) Auth (unchanged)</h2>
+    <div class="row">
+      <button id="loginBtn">Log in with Spotify</button>
+      <button id="createBtn" disabled>Create demo playlist</button>
+      <span class="muted">Leave this alone for now—just here so the page still works end-to-end.</span>
+    </div>
+    <div id="log" aria-live="polite"></div>
+  </section>
 
-  <div id="log" aria-live="polite"></div>
+  <!-- ===== CSV BROWSER ===== -->
+  <section class="card">
+    <h2>2) CSV Browser</h2>
+    <div class="row" style="justify-content:space-between;">
+      <div class="row">
+        <label for="csvPath" class="muted">CSV path:</label>
+        <input id="csvPath" type="text" value="songs.csv" class="mono" size="24" />
+        <button id="loadCsvBtn">Load CSV</button>
+      </div>
+      <input id="filterInput" type="search" placeholder="Filter: title / artist / album…" />
+    </div>
+    <div style="height:10px"></div>
+    <div class="table-wrap">
+      <div class="scroll">
+        <table id="csvTable">
+          <thead>
+            <tr>
+              <!-- Click to sort any of these -->
+              <th data-key="Order" class="sticky th-sort" data-sort="">#</th>
+              <th data-key="Title" class="sticky th-sort" data-sort="">Title</th>
+              <th data-key="Artist" class="sticky th-sort" data-sort="">Artist</th>
+              <th data-key="Release" class="sticky th-sort" data-sort="">Release</th>
+              <th data-key="BPM" class="sticky right th-sort" data-sort="">BPM</th>
+              <th data-key="Energy" class="sticky right th-sort" data-sort="">Energy</th>
+              <th data-key="Dance" class="sticky right th-sort" data-sort="">Dance</th>
+              <th data-key="Valence" class="sticky right th-sort" data-sort="">Valence</th>
+              <th data-key="Spotify_URL" class="sticky">Open</th>
+              <th data-key="Spotify_URI" class="sticky">URI</th>
+            </tr>
+          </thead>
+          <tbody id="csvBody">
+            <!-- rows injected -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="muted" style="margin-top:8px">Tip: headers are clickable to sort; typing in the filter narrows rows live.</div>
+  </section>
 
 <script>
-
-/** ===== CONFIG (edit these) ===== */
+/* ========================
+   CONFIG — keep your existing CLIENT_ID etc. here.
+   (If you pasted over your old file, re-add CLIENT_ID/TRACK_ID/etc.)
+======================== */
 const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";            // from developer dashboard
-const TRACK_ID  = "7BRD7x5pt8Lqa1eGYC4dzj";        // e.g. "11dFghVXANMlKmJXsNCbNl"
-const SCOPES = [
-  "playlist-modify-public",
-  "playlist-modify-private",
-  "user-read-private" // needed to GET /me for your user id
-].join(" ");
-
-// Always use the exact URL that is allowlisted as your Redirect URI (HTTPS required).
-// This uses the current page's full URL so it matches your deployed page.
+const SCOPES = ["playlist-modify-public","playlist-modify-private","user-read-private"].join(" ");
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
-/** ===== Utilities ===== */
+/* ===== Minimal logger reused from earlier ===== */
 const logEl = document.getElementById("log");
 function log(msg, cls="") {
   const p = document.createElement("div");
@@ -44,30 +106,25 @@ function log(msg, cls="") {
   logEl.appendChild(p);
 }
 
+/* ===== PKCE auth (unchanged logic) ===== */
 function generateRandomString(length) {
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const values = crypto.getRandomValues(new Uint8Array(length));
   return values.reduce((acc, x) => acc + possible[x % possible.length], "");
 }
-
 async function sha256(plain) {
   const encoder = new TextEncoder();
   const data = encoder.encode(plain);
   return crypto.subtle.digest('SHA-256', data);
 }
-
 function base64urlencode(bytes) {
   const str = String.fromCharCode(...new Uint8Array(bytes));
   return btoa(str).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
-
-/** ===== PKCE Step 1: redirect to authorize ===== */
 async function beginLogin() {
   const codeVerifier = generateRandomString(64);
   localStorage.setItem("code_verifier", codeVerifier);
-
   const codeChallenge = base64urlencode(await sha256(codeVerifier));
-
   const authUrl = new URL("https://accounts.spotify.com/authorize");
   authUrl.search = new URLSearchParams({
     response_type: "code",
@@ -76,18 +133,13 @@ async function beginLogin() {
     code_challenge_method: "S256",
     code_challenge: codeChallenge,
     redirect_uri: REDIRECT_URI,
-    // optional: state to guard CSRF
     state: generateRandomString(16)
   }).toString();
-
   window.location.href = authUrl.toString();
 }
-
-/** ===== PKCE Step 2: exchange code for tokens ===== */
 async function exchangeCodeForToken(code) {
   const codeVerifier = localStorage.getItem("code_verifier");
-  if (!codeVerifier) throw new Error("Missing code_verifier from localStorage.");
-
+  if (!codeVerifier) throw new Error("Missing code_verifier.");
   const body = new URLSearchParams({
     client_id: CLIENT_ID,
     grant_type: "authorization_code",
@@ -95,22 +147,17 @@ async function exchangeCodeForToken(code) {
     redirect_uri: REDIRECT_URI,
     code_verifier: codeVerifier
   });
-
   const resp = await fetch("https://accounts.spotify.com/api/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body
   });
-
   const data = await resp.json();
   if (!resp.ok) throw new Error((data && data.error_description) || resp.statusText);
-
   localStorage.setItem("access_token", data.access_token);
   localStorage.setItem("refresh_token", data.refresh_token || "");
   return data.access_token;
 }
-
-/** Helper to call Web API with bearer token */
 async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("access_token");
   if (!token) throw new Error("No access token.");
@@ -122,15 +169,11 @@ async function apiFetch(path, options = {}) {
       ...(options.headers || {})
     }
   });
-  if (resp.status === 401) {
-    throw new Error("Unauthorized (token expired?)");
-  }
+  if (resp.status === 401) throw new Error("Unauthorized (token expired?)");
   const text = await resp.text();
   try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
   catch { return { ok: resp.ok, status: resp.status, json: text }; }
 }
-
-/** ===== Demo: create a playlist and add one track ===== */
 async function createDemoPlaylist() {
   try {
     log("Fetching your profile (/me)…");
@@ -152,54 +195,161 @@ async function createDemoPlaylist() {
     const playlistId = newPl.json.id;
     log(`Created: ${newPl.json.name}`, "ok");
 
-    log("Adding track to playlist…");
-    const uri = `spotify:track:${TRACK_ID}`;
-    const add = await apiFetch(`/playlists/${encodeURIComponent(playlistId)}/tracks`, {
-      method: "POST",
-      body: JSON.stringify({ uris: [uri] })
-    });
-    if (!add.ok) throw new Error(JSON.stringify(add.json));
-
-    const url = newPl.json.external_urls?.spotify || `https://open.spotify.com/playlist/${playlistId}`;
-    log(`Done! Open playlist: ${url}`, "ok");
+    // NOTE: we're intentionally *not* adding tracks here right now.
   } catch (e) {
     log(`Error: ${e.message}`, "err");
     console.error(e);
   }
 }
 
-/** ===== On load: if redirected back with ?code=… exchange it ===== */
-(async function init() {
-  document.getElementById("loginBtn").addEventListener("click", beginLogin);
-  document.getElementById("createBtn").addEventListener("click", createDemoPlaylist);
+/* ===== CSV Browser logic ===== */
+const $ = (s) => document.querySelector(s);
+const csvBody = $("#csvBody");
+const filterInput = $("#filterInput");
+let csvRows = [];         // full dataset as array of objects
+let viewRows = [];        // filtered/sorted view
+let sortState = { key: "Order", dir: "asc" };
 
+function toNumberMaybe(v) {
+  if (v === null || v === undefined) return null;
+  const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+function escapeHTML(s) {
+  return String(s)
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#39;");
+}
+function renderTable() {
+  // filter
+  const q = filterInput.value.trim().toLowerCase();
+  if (q) {
+    viewRows = csvRows.filter(r => {
+      const hay = [
+        r.Title, r.Artist, r.Spotify_Album || r.Spotify_AlbumName, r.Spotify_Artists
+      ].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+  } else {
+    viewRows = csvRows.slice();
+  }
+
+  // sort
+  const { key, dir } = sortState;
+  viewRows.sort((a,b) => {
+    const av = a[key], bv = b[key];
+    const an = toNumberMaybe(av), bn = toNumberMaybe(bv);
+    let cmp;
+    if (an !== null && bn !== null) cmp = an - bn;
+    else cmp = String(av ?? "").localeCompare(String(bv ?? ""), undefined, { numeric: true, sensitivity: "base" });
+    return dir === "asc" ? cmp : -cmp;
+  });
+
+  // rows
+  const rowsHtml = viewRows.map(r => {
+    const spotifyUrl = r.Spotify_URL || (r.Spotify_Track_ID ? `https://open.spotify.com/track/${r.Spotify_Track_ID}` : "");
+    const uri = r.Spotify_URI || (r.Spotify_Track_ID ? `spotify:track:${r.Spotify_Track_ID}` : "");
+    return `<tr>
+      <td class="right">${escapeHTML(r.Order ?? "")}</td>
+      <td>${escapeHTML(r.Title ?? "")}</td>
+      <td>${escapeHTML(r.Artist ?? r.Spotify_Artists ?? "")}</td>
+      <td>${escapeHTML(r.Release ?? r.Spotify_Release_Date ?? "")}</td>
+      <td class="right">${escapeHTML(r.BPM ?? "")}</td>
+      <td class="right">${escapeHTML(r.Energy ?? "")}</td>
+      <td class="right">${escapeHTML(r.Dance ?? "")}</td>
+      <td class="right">${escapeHTML(r.Valence ?? "")}</td>
+      <td>${spotifyUrl ? `<a class="link" href="${escapeHTML(spotifyUrl)}" target="_blank" rel="noopener">Open</a>` : ""}</td>
+      <td class="mono">${escapeHTML(uri ?? "")}</td>
+    </tr>`;
+  }).join("");
+  csvBody.innerHTML = rowsHtml || `<tr><td colspan="10" class="muted">No rows.</td></tr>`;
+
+  // header arrows
+  document.querySelectorAll("thead th.th-sort").forEach(th => {
+    const k = th.dataset.key;
+    th.setAttribute("data-sort", k === key ? (dir === "asc" ? "▲" : "▼") : "");
+  });
+}
+
+async function loadCsv(path) {
+  return new Promise((resolve, reject) => {
+    if (!window.Papa) return reject(new Error("Papa Parse failed to load."));
+    Papa.parse(path, {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false,
+      complete: (res) => resolve(res.data),
+      error: (err) => reject(err),
+    });
+  });
+}
+
+function normalizeHeaders(obj) {
+  // Some exports vary (e.g., Spotify_Album vs Album); lightly normalize common ones
+  const map = {};
+  Object.keys(obj).forEach(k => {
+    const nk = k.replace(/\s+/g, "_");
+    map[nk] = obj[k];
+  });
+  return map;
+}
+
+/* ===== Wire up events ===== */
+document.getElementById("loginBtn").addEventListener("click", beginLogin);
+document.getElementById("createBtn").addEventListener("click", createDemoPlaylist);
+
+document.getElementById("loadCsvBtn").addEventListener("click", async () => {
+  const path = document.getElementById("csvPath").value.trim() || "songs.csv";
+  try {
+    const data = await loadCsv(path);
+    csvRows = data.map(normalizeHeaders);
+    renderTable();
+  } catch (e) {
+    console.error(e);
+    alert("Failed to load CSV. Make sure the file exists next to index.html (or adjust the path).");
+  }
+});
+
+filterInput.addEventListener("input", renderTable);
+
+document.querySelectorAll("thead th.th-sort").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (sortState.key === key) {
+      sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+    } else {
+      sortState.key = key;
+      sortState.dir = "asc";
+    }
+    renderTable();
+  });
+});
+
+/* ===== On load: handle PKCE redirect; enable create button if token present ===== */
+(async function init() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const error = params.get("error");
-
-  if (error) {
-    log(`Auth error: ${error}`, "err");
-    return;
-  }
+  if (error) { log(`Auth error: ${error}`, "err"); }
   if (code) {
     try {
       log("Exchanging authorization code for access token…");
       await exchangeCodeForToken(code);
-      // clean URL (remove ?code=…)
       window.history.replaceState({}, document.title, window.location.pathname);
-      log("Logged in. You can now create a playlist.", "ok");
+      log("Logged in. (We’re not using it for the table yet.)", "ok");
       document.getElementById("createBtn").disabled = false;
     } catch (e) {
       log(`Token exchange failed: ${e.message}`, "err");
     }
+  } else if (localStorage.getItem("access_token")) {
+    document.getElementById("createBtn").disabled = false;
+    log("Token present.", "ok");
   } else {
-    // If we already have a token from a prior login, enable the button.
-    if (localStorage.getItem("access_token")) {
-      document.getElementById("createBtn").disabled = false;
-      log("Token present. Ready to create a playlist.", "ok");
-    } else {
-      log("Click ‘Log in with Spotify’ to start.", "ok");
-    }
+    log("Auth idle. CSV works without login.", "ok");
   }
 })();
 </script>
