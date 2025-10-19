@@ -244,6 +244,18 @@ function renderTable() {
   document.querySelectorAll(".rowCheckbox").forEach(cb => {
     cb.addEventListener("change", updateSelectedCount);
   });
+
+  document.querySelectorAll("tbody tr").forEach(tr => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.tagName === "A") return;
+      if (e.target.type === "checkbox") return;
+      const checkbox = tr.querySelector(".rowCheckbox");
+      if (checkbox) {
+        checkbox.checked = !checkbox.checked;
+        updateSelectedCount();
+      }
+    });
+  });
 }
 
 async function loadCsv(path) {
@@ -355,7 +367,11 @@ document.getElementById("selectAll").addEventListener("change", (e) => {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const error = params.get("error");
-  if (error) { log(`Auth error: ${error}`, "err"); }
+  
+  if (error) { 
+    log(`Auth error: ${error}`, "err"); 
+  }
+  
   if (code) {
     try {
       log("Exchanging authorization code for access token…");
@@ -373,7 +389,7 @@ document.getElementById("selectAll").addEventListener("change", (e) => {
     log("Token present.", "ok");
   } else {
     setAuthStatus("Not logged in");
-    log("Log in to create playlists and add tracks.", "");
+    log("CSV features work without login. Log in to create playlists.", "");
   }
 })();
 </script>
