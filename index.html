@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Spotify PKCE + CSV Browser</title>
+  <title>Spotify CSV Browser</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { --pad: 12px; --radius: 12px; }
@@ -17,7 +17,6 @@
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     .muted { color: #666; font-size: 13px; }
 
-    /* table */
     .table-wrap { border: 1px solid #e5e5e5; border-radius: var(--radius); overflow: hidden; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
     thead th { background: #fafafa; font-weight: 600; text-align: left; border-bottom: 1px solid #eee; padding: 10px; cursor: pointer; user-select: none; }
@@ -25,33 +24,19 @@
     tbody tr:hover { background: #fffdf7; }
     .sticky { position: sticky; top: 0; z-index: 1; }
     .scroll { max-height: 520px; overflow: auto; }
-    .badge { display:inline-block; padding: 2px 8px; border-radius: 999px; border:1px solid #e5e5e5; font-size:12px; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
     .right { text-align: right; }
     .link { text-decoration: none; }
     .th-sort::after { content: attr(data-sort); margin-left: 6px; font-size: 11px; color: #999; }
   </style>
-  <!-- Papa Parse for robust CSV parsing (quoted fields, commas, etc.) -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
 <body>
-  <h1>Spotify PKCE Demo</h1>
-  <p class="muted">Auth/playlist bits left intact; below is a CSV browser for your tracks. We’re not wiring playlist actions yet.</p>
+  <h1>Spotify CSV Browser</h1>
+  <p class="muted">Load, filter, sort, and browse track data from CSV files.</p>
 
-  <!-- ===== EXISTING AUTH CONTROLS (unchanged) ===== -->
   <section class="card">
-    <h2>1) Auth (unchanged)</h2>
-    <div class="row">
-      <button id="loginBtn">Log in with Spotify</button>
-      <button id="createBtn" disabled>Create demo playlist</button>
-      <span class="muted">Leave this alone for now—just here so the page still works end-to-end.</span>
-    </div>
-    <div id="log" aria-live="polite"></div>
-  </section>
-
-  <!-- ===== CSV BROWSER ===== -->
-  <section class="card">
-    <h2>2) CSV Browser</h2>
+    <h2>CSV Browser</h2>
     <div class="row" style="justify-content:space-between;">
       <div class="row">
         <label for="csvPath" class="muted">CSV path:</label>
@@ -66,7 +51,6 @@
         <table id="csvTable">
           <thead>
             <tr>
-              <!-- Replace number column with checkbox -->
               <th class="sticky"><input type="checkbox" id="selectAll" /></th>
               <th data-key="Title" class="sticky th-sort" data-sort="">Title</th>
               <th data-key="Artist" class="sticky th-sort" data-sort="">Artist</th>
@@ -79,32 +63,29 @@
             </tr>
           </thead>
           <tbody id="csvBody">
-            <!-- rows injected -->
           </tbody>
         </table>
       </div>
     </div>
-    <div class="muted" style="margin-top:8px">Tip: headers are clickable to sort; typing in the filter narrows rows live.</div>
+    <div class="muted" style="margin-top:8px">Tip: click headers to sort; use the filter to search by title, artist, or album.</div>
   </section>
 
+  <div id="log" aria-live="polite" style="display:none;"></div>
+
 <script>
-/* ========================
-   CONFIG — Hard-coded values
-======================== */
-const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9"; // Replace with your Spotify Client ID
+const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";
 const SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
-/* ===== Minimal logger reused from earlier ===== */
 const logEl = document.getElementById("log");
 function log(msg, cls="") {
+  logEl.style.display = "block";
   const p = document.createElement("div");
   if (cls) p.className = cls;
   p.textContent = msg;
   logEl.appendChild(p);
 }
 
-/* ===== PKCE auth (unchanged logic) ===== */
 function generateRandomString(length) {
   const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const values = crypto.getRandomValues(new Uint8Array(length));
@@ -156,57 +137,13 @@ async function exchangeCodeForToken(code) {
   localStorage.setItem("refresh_token", data.refresh_token || "");
   return data.access_token;
 }
-async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem("access_token");
-  if (!token) throw new Error("No access token.");
-  const resp = await fetch(`https://api.spotify.com/v1${path}`, {
-    ...options,
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {})
-    }
-  });
-  if (resp.status === 401) throw new Error("Unauthorized (token expired?)");
-  const text = await resp.text();
-  try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
-  catch { return { ok: resp.ok, status: resp.status, json: text }; }
-}
-async function createDemoPlaylist() {
-  try {
-    log("Fetching your profile (/me)…");
-    const me = await apiFetch("/me");
-    if (!me.ok) throw new Error(JSON.stringify(me.json));
-    const userId = me.json.id;
-    log(`Hello ${me.json.display_name || userId}!`, "ok");
 
-    log("Creating playlist…");
-    const newPl = await apiFetch(`/users/${encodeURIComponent(userId)}/playlists`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: "PKCE Demo Playlist",
-        description: "Created by a static HTML PKCE demo",
-        public: false
-      })
-    });
-    if (!newPl.ok) throw new Error(JSON.stringify(newPl.json));
-    const playlistId = newPl.json.id;
-    log(`Created: ${newPl.json.name}`, "ok");
-
-    // NOTE: we're intentionally *not* adding tracks here right now.
-  } catch (e) {
-    log(`Error: ${e.message}`, "err");
-    console.error(e);
-  }
-}
-
-/* ===== CSV Browser logic ===== */
 const $ = (s) => document.querySelector(s);
 const csvBody = $("#csvBody");
 const filterInput = $("#filterInput");
-let csvRows = [];         // full dataset as array of objects
-let viewRows = [];        // filtered/sorted view
-let sortState = { key: "Order", dir: "asc" };
+let csvRows = [];
+let viewRows = [];
+let sortState = { key: "Title", dir: "asc" };
 
 function toNumberMaybe(v) {
   if (v === null || v === undefined) return null;
@@ -222,20 +159,16 @@ function escapeHTML(s) {
     .replaceAll("'","&#39;");
 }
 function renderTable() {
-  // filter
   const q = filterInput.value.trim().toLowerCase();
   if (q) {
     viewRows = csvRows.filter(r => {
-      const hay = [
-        r.Title, r.Artist, r.Spotify_Album || r.Spotify_AlbumName, r.Spotify_Artists
-      ].filter(Boolean).join(" ").toLowerCase();
+      const hay = [r.Title, r.Artist, r.Release, r.Spotify_Artists].filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q);
     });
   } else {
     viewRows = csvRows.slice();
   }
 
-  // sort
   const { key, dir } = sortState;
   viewRows.sort((a,b) => {
     const av = a[key], bv = b[key];
@@ -246,7 +179,6 @@ function renderTable() {
     return dir === "asc" ? cmp : -cmp;
   });
 
-  // rows
   const rowsHtml = viewRows.map(r => {
     const spotifyUrl = r.Spotify_URL || (r.Spotify_Track_ID ? `https://open.spotify.com/track/${r.Spotify_Track_ID}` : "");
     return `<tr>
@@ -263,7 +195,6 @@ function renderTable() {
   }).join("");
   csvBody.innerHTML = rowsHtml || `<tr><td colspan="9" class="muted">No rows.</td></tr>`;
 
-  // header arrows
   document.querySelectorAll("thead th.th-sort").forEach(th => {
     const k = th.dataset.key;
     th.setAttribute("data-sort", k === key ? (dir === "asc" ? "▲" : "▼") : "");
@@ -285,7 +216,6 @@ async function loadCsv(path) {
 }
 
 function normalizeHeaders(obj) {
-  // Some exports vary (e.g., Spotify_Album vs Album); lightly normalize common ones
   const map = {};
   Object.keys(obj).forEach(k => {
     const nk = k.replace(/\s+/g, "_");
@@ -294,19 +224,16 @@ function normalizeHeaders(obj) {
   return map;
 }
 
-/* ===== Wire up events ===== */
-document.getElementById("loginBtn").addEventListener("click", beginLogin);
-document.getElementById("createBtn").addEventListener("click", createDemoPlaylist);
-
 document.getElementById("loadCsvBtn").addEventListener("click", async () => {
-  const path = document.getElementById("csvPath").value.trim() || "spotify_master_database.csv";
+  const path = document.getElementById("csvPath").value.trim() || "songs.csv";
   try {
     const data = await loadCsv(path);
     csvRows = data.map(normalizeHeaders);
     renderTable();
+    log(`Loaded ${csvRows.length} rows.`, "ok");
   } catch (e) {
     console.error(e);
-    alert("Failed to load CSV. Make sure the file exists next to index.html (or adjust the path).");
+    log(`Failed to load CSV: ${e.message}`, "err");
   }
 });
 
@@ -326,11 +253,9 @@ document.querySelectorAll("thead th.th-sort").forEach(th => {
 });
 
 document.getElementById("selectAll").addEventListener("change", (e) => {
-  const checkboxes = document.querySelectorAll(".rowCheckbox");
-  checkboxes.forEach(cb => cb.checked = e.target.checked);
+  document.querySelectorAll(".rowCheckbox").forEach(cb => cb.checked = e.target.checked);
 });
 
-/* ===== On load: Initialize ===== */
 (async function init() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
@@ -341,16 +266,12 @@ document.getElementById("selectAll").addEventListener("change", (e) => {
       log("Exchanging authorization code for access token…");
       await exchangeCodeForToken(code);
       window.history.replaceState({}, document.title, window.location.pathname);
-      log("Logged in. (We’re not using it for the table yet.)", "ok");
-      document.getElementById("createBtn").disabled = false;
+      log("Logged in.", "ok");
     } catch (e) {
       log(`Token exchange failed: ${e.message}`, "err");
     }
   } else if (localStorage.getItem("access_token")) {
-    document.getElementById("createBtn").disabled = false;
     log("Token present.", "ok");
-  } else {
-    log("Auth idle. CSV works without login.", "ok");
   }
 })();
 </script>
