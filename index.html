@@ -2,26 +2,47 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Spotify Playlist – Simple Loader</title>
+<title>Spotify + Soundstat – Track Data Fetcher</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
-  button, select { padding: 8px 12px; margin: 6px 0; }
+  button, select, input { padding: 8px 12px; margin: 6px 0; }
   table { border-collapse: collapse; margin-top: 16px; width: 100%; font-size: 14px; }
   th, td { border: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: middle; }
   th { background: #f2f2f2; }
   .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
   .muted { color:#666; font-size:12px; }
+  .ok { color:#0a7f2e; }
+  .err { color:#b00020; }
+  pre { background:#f6f8fa; padding:10px; border-radius:6px; overflow:auto; max-height:200px; }
+  fieldset { border:1px solid #ddd; padding:12px; border-radius:8px; }
+  legend { padding: 0 6px; }
+  label { font-size: 14px; }
 </style>
 </head>
 <body>
-<h2>Spotify Playlist – Simple Loader</h2>
+<h2>Spotify + Soundstat – Track Data Fetcher</h2>
 <div>Status: <span id="status">Not logged in</span></div>
+
 <div class="row">
   <button id="loginBtn">Login with Spotify</button>
   <button id="logoutBtn">Logout</button>
 </div>
+
+<fieldset>
+  <legend>Soundstat API Settings</legend>
+  <div class="row">
+    <label for="ssBase">Base URL</label>
+    <input id="ssBase" type="url" placeholder="https://api.soundstat.example" style="min-width:320px" />
+    <label for="ssKey">API Key</label>
+    <input id="ssKey" type="password" placeholder="your x_api_key" style="min-width:320px" />
+    <button id="saveSs">Save</button>
+  </div>
+  <div class="muted" id="ssSavedMsg">Enter your Soundstat base URL and API key, then Save.</div>
+</fieldset>
+
 <hr/>
+
 <div class="row">
   <label>Choose one of your playlists:</label>
   <select id="playlistSelect" disabled></select>
@@ -96,6 +117,37 @@ async function fetchPlaylistTracks(playlistId){
   return items.map(it=>it.track).filter(t=>t && t.id);
 }
 
+/* ---------- Soundstat helpers ---------- */
+function getSoundstatConfig(){
+  return {
+    base: sessionStorage.getItem("ss_base") || "",
+    key:  sessionStorage.getItem("ss_key")  || ""
+  };
+}
+function saveSoundstatConfig(base, key){
+  sessionStorage.setItem("ss_base", base.trim());
+  sessionStorage.setItem("ss_key", key.trim());
+}
+async function soundstatFetch(trackId){
+  const { base, key } = getSoundstatConfig();
+  if(!base || !key) throw new Error("Missing Soundstat base URL or API key.");
+  const cleanBase = base.replace(/\/+$/,""); // remove trailing slash
+  const url = `${cleanBase}/api/v1/track/${encodeURIComponent(trackId)}`;
+
+  // Try header-based auth first
+  let res = await fetch(url, { headers: { "x-api-key": key, "Accept":"application/json" } });
+  if(res.ok) return res.json();
+
+  // If that fails, try query param version (?x_api_key=...)
+  const qUrl = `${url}?x_api_key=${encodeURIComponent(key)}`;
+  res = await fetch(qUrl, { headers: { "Accept":"application/json" } });
+  if(res.ok) return res.json();
+
+  // Surface detailed error text
+  const text = await res.text();
+  throw new Error(`Soundstat ${res.status} - ${text || "Unknown error"}`);
+}
+
 /* ---------- UI helpers ---------- */
 function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]))}
 
@@ -108,6 +160,21 @@ function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;","
   const playlistSelect = document.getElementById("playlistSelect");
   const loadBtn = document.getElementById("loadBtn");
   const output = document.getElementById("output");
+  const ssBase = document.getElementById("ssBase");
+  const ssKey = document.getElementById("ssKey");
+  const saveSs = document.getElementById("saveSs");
+  const ssSavedMsg = document.getElementById("ssSavedMsg");
+
+  // restore Soundstat config
+  const cfg = getSoundstatConfig();
+  if (cfg.base) ssBase.value = cfg.base;
+  if (cfg.key)  ssKey.value  = cfg.key;
+  if (cfg.base && cfg.key) ssSavedMsg.textContent = "Saved. Requests will use these values.";
+
+  saveSs.onclick = () => {
+    saveSoundstatConfig(ssBase.value, ssKey.value);
+    ssSavedMsg.textContent = "Saved. Requests will use these values.";
+  };
 
   loginBtn.onclick = beginLogin;
   logoutBtn.onclick = () => {
@@ -117,6 +184,7 @@ function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;","
     playlistSelect.disabled=true;
     loadBtn.disabled=true;
     output.innerHTML="";
+    ssSavedMsg.textContent = "Enter your Soundstat base URL and API key, then Save.";
   };
 
   if(token()){
@@ -138,7 +206,7 @@ function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;","
       const tracks = await fetchPlaylistTracks(pid);
 
       let html = `<table><tr>
-        <th>#</th><th>Track</th><th>Artist(s)</th><th>Action</th>
+        <th>#</th><th>Track</th><th>Artist(s)</th><th>Action</th><th>Soundstat JSON</th><th>Msg</th>
       </tr>`;
       tracks.forEach((t,i)=>{
         const artists = t.artists.map(a=>a.name).join(", ");
@@ -146,20 +214,38 @@ function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;","
           <td>${i+1}</td>
           <td>${escapeHtml(t.name)}</td>
           <td>${escapeHtml(artists)}</td>
-          <td><button class="actionBtn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-artists="${escapeHtml(artists)}">Do Action</button></td>
+          <td><button class="fetchBtn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-artists="${escapeHtml(artists)}">Fetch Stats</button></td>
+          <td style="width:40%"><pre id="json-${t.id}"></pre></td>
+          <td id="msg-${t.id}" class="muted">—</td>
         </tr>`;
       });
       html += `</table>`;
       output.innerHTML = html;
       status.textContent = `Loaded ${tracks.length} tracks.`;
 
-      // Wire the placeholder action buttons
-      document.querySelectorAll(".actionBtn").forEach(btn=>{
-        btn.onclick = (ev)=>{
+      // Wire Soundstat fetch per row
+      document.querySelectorAll(".fetchBtn").forEach(btn=>{
+        btn.onclick = async (ev)=>{
+          const id = ev.currentTarget.getAttribute("data-id");
           const name = ev.currentTarget.getAttribute("data-name");
           const artists = ev.currentTarget.getAttribute("data-artists");
-          status.textContent = `Ready: ${name} — ${artists}`;
-          // later: replace this with your API call, keep the same data attributes
+          const msgEl = document.getElementById(`msg-${id}`);
+          const jsonEl = document.getElementById(`json-${id}`);
+          msgEl.textContent = "Calling Soundstat…";
+          msgEl.className = "muted";
+          jsonEl.textContent = "";
+          try{
+            const data = await soundstatFetch(id);
+            jsonEl.textContent = JSON.stringify(data, null, 2);
+            msgEl.textContent = `OK for "${name}" — ${artists}`;
+            msgEl.className = "ok";
+            document.getElementById("status").textContent = `Fetched Soundstat for: ${name} — ${artists}`;
+          }catch(e){
+            console.error(e);
+            msgEl.textContent = e.message || "Error";
+            msgEl.className = "err";
+            document.getElementById("status").textContent = `Soundstat error for: ${name}`;
+          }
         };
       });
 
