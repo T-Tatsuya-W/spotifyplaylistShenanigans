@@ -1,258 +1,206 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<title>Spotify + Soundstat – Track Data Fetcher</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
-  button, select, input { padding: 8px 12px; margin: 6px 0; }
-  table { border-collapse: collapse; margin-top: 16px; width: 100%; font-size: 14px; }
-  th, td { border: 1px solid #ddd; padding: 6px; text-align: left; vertical-align: middle; }
-  th { background: #f2f2f2; }
-  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-  .muted { color:#666; font-size:12px; }
-  .ok { color:#0a7f2e; }
-  .err { color:#b00020; }
-  pre { background:#f6f8fa; padding:10px; border-radius:6px; overflow:auto; max-height:200px; }
-  fieldset { border:1px solid #ddd; padding:12px; border-radius:8px; }
-  legend { padding: 0 6px; }
-  label { font-size: 14px; }
-</style>
+  <meta charset="utf-8" />
+  <title>Spotify PKCE Demo – Create Playlist</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 32px; }
+    button { padding: 10px 14px; margin: 8px 0; font-size: 16px; cursor: pointer; }
+    #log { white-space: pre-wrap; border: 1px solid #ddd; padding: 12px; margin-top: 16px; font-size: 14px; }
+    .ok { color: #087443; } .err { color: #a40000; }
+  </style>
 </head>
 <body>
-<h2>Spotify + Soundstat – Track Data Fetcher</h2>
-<div>Status: <span id="status">Not logged in</span></div>
+  <h1>Spotify PKCE Demo</h1>
+  <p>This page logs in with PKCE and creates a playlist with one hard-coded track.</p>
 
-<div class="row">
-  <button id="loginBtn">Login with Spotify</button>
-  <button id="logoutBtn">Logout</button>
-</div>
+  <button id="loginBtn">1) Log in with Spotify</button><br/>
+  <button id="createBtn" disabled>2) Create demo playlist</button>
 
-<fieldset>
-  <legend>Soundstat API Settings</legend>
-  <div class="row">
-    <label for="ssBase">Base URL</label>
-    <input id="ssBase" type="url" placeholder="https://api.soundstat.example" style="min-width:320px" />
-    <label for="ssKey">API Key</label>
-    <input id="ssKey" type="password" placeholder="your x_api_key" style="min-width:320px" />
-    <button id="saveSs">Save</button>
-  </div>
-  <div class="muted" id="ssSavedMsg">Enter your Soundstat base URL and API key, then Save.</div>
-</fieldset>
-
-<hr/>
-
-<div class="row">
-  <label>Choose one of your playlists:</label>
-  <select id="playlistSelect" disabled></select>
-  <button id="loadBtn" disabled>Load Tracks</button>
-</div>
-
-<div id="output"></div>
+  <div id="log" aria-live="polite"></div>
 
 <script>
-/* ---------- CONFIG ---------- */
-const CLIENT_ID = "7e36be9f10ef4de09e938b5c787adf42";
-const REDIRECT_URI = (location.hostname === "127.0.0.1" || location.hostname === "localhost")
-  ? "http://127.0.0.1:8000/"
-  : "https://t-tatsuya-w.github.io/spotifyplaylistShenanigans/";
 
-/* ---------- PKCE OAuth ---------- */
-async function sha256(s){const b=new TextEncoder().encode(s);const d=await crypto.subtle.digest('SHA-256',b);return btoa(String.fromCharCode(...new Uint8Array(d))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')}
-function randomString(n=64){const c='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';return Array.from(crypto.getRandomValues(new Uint8Array(n))).map(x=>c[x%c.length]).join('')}
-async function beginLogin(){
-  const verifier=randomString(), challenge=await sha256(verifier);
-  sessionStorage.setItem('verifier',verifier);
-  const scopes="playlist-read-private playlist-read-collaborative";
-  const u=new URL("https://accounts.spotify.com/authorize");
-  u.searchParams.set("response_type","code");
-  u.searchParams.set("client_id",CLIENT_ID);
-  u.searchParams.set("scope",scopes);
-  u.searchParams.set("redirect_uri",REDIRECT_URI);
-  u.searchParams.set("code_challenge_method","S256");
-  u.searchParams.set("code_challenge",challenge);
-  location = u.toString();
+/** ===== CONFIG (edit these) ===== */
+const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";            // from developer dashboard
+const TRACK_ID  = "7BRD7x5pt8Lqa1eGYC4dzj";        // e.g. "11dFghVXANMlKmJXsNCbNl"
+const SCOPES = [
+  "playlist-modify-public",
+  "playlist-modify-private",
+  "user-read-private" // needed to GET /me for your user id
+].join(" ");
+
+// Always use the exact URL that is allowlisted as your Redirect URI (HTTPS required).
+// This uses the current page's full URL so it matches your deployed page.
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+
+/** ===== Utilities ===== */
+const logEl = document.getElementById("log");
+function log(msg, cls="") {
+  const p = document.createElement("div");
+  if (cls) p.className = cls;
+  p.textContent = msg;
+  logEl.appendChild(p);
 }
-async function completeLogin(){
-  const p=new URLSearchParams(location.search);
-  if(!p.get("code")) return;
-  const code=p.get("code"), verifier=sessionStorage.getItem("verifier");
-  const body=new URLSearchParams({grant_type:"authorization_code", code, redirect_uri:REDIRECT_URI, client_id:CLIENT_ID, code_verifier:verifier});
-  const res=await fetch("https://accounts.spotify.com/api/token",{method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body});
-  const data=await res.json();
-  if(data.access_token){
-    sessionStorage.setItem("access_token",data.access_token);
-    sessionStorage.setItem("scopes",data.scope||"");
-    document.getElementById("status").textContent = "Logged in (scopes: "+(data.scope||"")+")";
-    history.replaceState({},document.title,location.pathname);
+
+function generateRandomString(length) {
+  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const values = crypto.getRandomValues(new Uint8Array(length));
+  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+}
+
+async function sha256(plain) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plain);
+  return crypto.subtle.digest('SHA-256', data);
+}
+
+function base64urlencode(bytes) {
+  const str = String.fromCharCode(...new Uint8Array(bytes));
+  return btoa(str).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+/** ===== PKCE Step 1: redirect to authorize ===== */
+async function beginLogin() {
+  const codeVerifier = generateRandomString(64);
+  localStorage.setItem("code_verifier", codeVerifier);
+
+  const codeChallenge = base64urlencode(await sha256(codeVerifier));
+
+  const authUrl = new URL("https://accounts.spotify.com/authorize");
+  authUrl.search = new URLSearchParams({
+    response_type: "code",
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    code_challenge_method: "S256",
+    code_challenge: codeChallenge,
+    redirect_uri: REDIRECT_URI,
+    // optional: state to guard CSRF
+    state: generateRandomString(16)
+  }).toString();
+
+  window.location.href = authUrl.toString();
+}
+
+/** ===== PKCE Step 2: exchange code for tokens ===== */
+async function exchangeCodeForToken(code) {
+  const codeVerifier = localStorage.getItem("code_verifier");
+  if (!codeVerifier) throw new Error("Missing code_verifier from localStorage.");
+
+  const body = new URLSearchParams({
+    client_id: CLIENT_ID,
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: REDIRECT_URI,
+    code_verifier: codeVerifier
+  });
+
+  const resp = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+
+  const data = await resp.json();
+  if (!resp.ok) throw new Error((data && data.error_description) || resp.statusText);
+
+  localStorage.setItem("access_token", data.access_token);
+  localStorage.setItem("refresh_token", data.refresh_token || "");
+  return data.access_token;
+}
+
+/** Helper to call Web API with bearer token */
+async function apiFetch(path, options = {}) {
+  const token = localStorage.getItem("access_token");
+  if (!token) throw new Error("No access token.");
+  const resp = await fetch(`https://api.spotify.com/v1${path}`, {
+    ...options,
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  if (resp.status === 401) {
+    throw new Error("Unauthorized (token expired?)");
+  }
+  const text = await resp.text();
+  try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
+  catch { return { ok: resp.ok, status: resp.status, json: text }; }
+}
+
+/** ===== Demo: create a playlist and add one track ===== */
+async function createDemoPlaylist() {
+  try {
+    log("Fetching your profile (/me)…");
+    const me = await apiFetch("/me");
+    if (!me.ok) throw new Error(JSON.stringify(me.json));
+    const userId = me.json.id;
+    log(`Hello ${me.json.display_name || userId}!`, "ok");
+
+    log("Creating playlist…");
+    const newPl = await apiFetch(`/users/${encodeURIComponent(userId)}/playlists`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "PKCE Demo Playlist",
+        description: "Created by a static HTML PKCE demo",
+        public: false
+      })
+    });
+    if (!newPl.ok) throw new Error(JSON.stringify(newPl.json));
+    const playlistId = newPl.json.id;
+    log(`Created: ${newPl.json.name}`, "ok");
+
+    log("Adding track to playlist…");
+    const uri = `spotify:track:${TRACK_ID}`;
+    const add = await apiFetch(`/playlists/${encodeURIComponent(playlistId)}/tracks`, {
+      method: "POST",
+      body: JSON.stringify({ uris: [uri] })
+    });
+    if (!add.ok) throw new Error(JSON.stringify(add.json));
+
+    const url = newPl.json.external_urls?.spotify || `https://open.spotify.com/playlist/${playlistId}`;
+    log(`Done! Open playlist: ${url}`, "ok");
+  } catch (e) {
+    log(`Error: ${e.message}`, "err");
+    console.error(e);
+  }
+}
+
+/** ===== On load: if redirected back with ?code=… exchange it ===== */
+(async function init() {
+  document.getElementById("loginBtn").addEventListener("click", beginLogin);
+  document.getElementById("createBtn").addEventListener("click", createDemoPlaylist);
+
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const error = params.get("error");
+
+  if (error) {
+    log(`Auth error: ${error}`, "err");
+    return;
+  }
+  if (code) {
+    try {
+      log("Exchanging authorization code for access token…");
+      await exchangeCodeForToken(code);
+      // clean URL (remove ?code=…)
+      window.history.replaceState({}, document.title, window.location.pathname);
+      log("Logged in. You can now create a playlist.", "ok");
+      document.getElementById("createBtn").disabled = false;
+    } catch (e) {
+      log(`Token exchange failed: ${e.message}`, "err");
+    }
   } else {
-    document.getElementById("status").textContent="Login failed";
-    console.error("Login failed:", data);
-  }
-}
-function token(){return sessionStorage.getItem("access_token");}
-
-/* ---------- Spotify helpers ---------- */
-async function spFetch(pathOrUrl){
-  const t = token();
-  const url = pathOrUrl.startsWith("http") ? pathOrUrl : "https://api.spotify.com/v1"+pathOrUrl;
-  const res = await fetch(url, { headers:{ "Authorization":`Bearer ${t}`, "Accept":"application/json" } });
-  if(!res.ok){
-    const text = await res.text();
-    console.error("Spotify API error:", res.status, text);
-    throw new Error(`HTTP ${res.status} - ${text}`);
-  }
-  return res.json();
-}
-async function fetchUserPlaylists(){
-  let url="https://api.spotify.com/v1/me/playlists?limit=50"; const all=[];
-  while(url){ const page=await spFetch(url); all.push(...(page.items||[])); url=page.next; }
-  return all;
-}
-async function fetchPlaylistTracks(playlistId){
-  let url=`https://api.spotify.com/v1/playlists/${playlistId}/tracks?limit=100&market=from_token`;
-  const items=[];
-  while(url){ const page=await spFetch(url); items.push(...(page.items||[])); url=page.next; }
-  return items.map(it=>it.track).filter(t=>t && t.id);
-}
-
-/* ---------- Soundstat helpers ---------- */
-function getSoundstatConfig(){
-  return {
-    base: sessionStorage.getItem("ss_base") || "",
-    key:  sessionStorage.getItem("ss_key")  || ""
-  };
-}
-function saveSoundstatConfig(base, key){
-  sessionStorage.setItem("ss_base", base.trim());
-  sessionStorage.setItem("ss_key", key.trim());
-}
-async function soundstatFetch(trackId){
-  const { base, key } = getSoundstatConfig();
-  if(!base || !key) throw new Error("Missing Soundstat base URL or API key.");
-  const cleanBase = base.replace(/\/+$/,""); // remove trailing slash
-  const url = `${cleanBase}/api/v1/track/${encodeURIComponent(trackId)}`;
-
-  // Try header-based auth first
-  let res = await fetch(url, { headers: { "x-api-key": key, "Accept":"application/json" } });
-  if(res.ok) return res.json();
-
-  // If that fails, try query param version (?x_api_key=...)
-  const qUrl = `${url}?x_api_key=${encodeURIComponent(key)}`;
-  res = await fetch(qUrl, { headers: { "Accept":"application/json" } });
-  if(res.ok) return res.json();
-
-  // Surface detailed error text
-  const text = await res.text();
-  throw new Error(`Soundstat ${res.status} - ${text || "Unknown error"}`);
-}
-
-/* ---------- UI helpers ---------- */
-function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]))}
-
-/* ---------- App ---------- */
-(async function init(){
-  await completeLogin();
-  const status = document.getElementById("status");
-  const loginBtn = document.getElementById("loginBtn");
-  const logoutBtn = document.getElementById("logoutBtn");
-  const playlistSelect = document.getElementById("playlistSelect");
-  const loadBtn = document.getElementById("loadBtn");
-  const output = document.getElementById("output");
-  const ssBase = document.getElementById("ssBase");
-  const ssKey = document.getElementById("ssKey");
-  const saveSs = document.getElementById("saveSs");
-  const ssSavedMsg = document.getElementById("ssSavedMsg");
-
-  // restore Soundstat config
-  const cfg = getSoundstatConfig();
-  if (cfg.base) ssBase.value = cfg.base;
-  if (cfg.key)  ssKey.value  = cfg.key;
-  if (cfg.base && cfg.key) ssSavedMsg.textContent = "Saved. Requests will use these values.";
-
-  saveSs.onclick = () => {
-    saveSoundstatConfig(ssBase.value, ssKey.value);
-    ssSavedMsg.textContent = "Saved. Requests will use these values.";
-  };
-
-  loginBtn.onclick = beginLogin;
-  logoutBtn.onclick = () => {
-    sessionStorage.clear();
-    status.textContent="Logged out";
-    playlistSelect.innerHTML="";
-    playlistSelect.disabled=true;
-    loadBtn.disabled=true;
-    output.innerHTML="";
-    ssSavedMsg.textContent = "Enter your Soundstat base URL and API key, then Save.";
-  };
-
-  if(token()){
-    status.textContent = "Logged in (scopes: "+(sessionStorage.getItem("scopes")||"")+")";
-    try{
-      const pls = await fetchUserPlaylists();
-      playlistSelect.innerHTML = pls.map(p => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
-      playlistSelect.disabled = false;
-      loadBtn.disabled = false;
-    }catch(e){
-      status.textContent = "Error fetching playlists: "+e.message;
+    // If we already have a token from a prior login, enable the button.
+    if (localStorage.getItem("access_token")) {
+      document.getElementById("createBtn").disabled = false;
+      log("Token present. Ready to create a playlist.", "ok");
+    } else {
+      log("Click ‘Log in with Spotify’ to start.", "ok");
     }
   }
-
-  loadBtn.onclick = async () => {
-    const pid = playlistSelect.value; if(!pid) return;
-    status.textContent = "Loading tracks…";
-    try{
-      const tracks = await fetchPlaylistTracks(pid);
-
-      let html = `<table><tr>
-        <th>#</th><th>Track</th><th>Artist(s)</th><th>Action</th><th>Soundstat JSON</th><th>Msg</th>
-      </tr>`;
-      tracks.forEach((t,i)=>{
-        const artists = t.artists.map(a=>a.name).join(", ");
-        html += `<tr>
-          <td>${i+1}</td>
-          <td>${escapeHtml(t.name)}</td>
-          <td>${escapeHtml(artists)}</td>
-          <td><button class="fetchBtn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" data-artists="${escapeHtml(artists)}">Fetch Stats</button></td>
-          <td style="width:40%"><pre id="json-${t.id}"></pre></td>
-          <td id="msg-${t.id}" class="muted">—</td>
-        </tr>`;
-      });
-      html += `</table>`;
-      output.innerHTML = html;
-      status.textContent = `Loaded ${tracks.length} tracks.`;
-
-      // Wire Soundstat fetch per row
-      document.querySelectorAll(".fetchBtn").forEach(btn=>{
-        btn.onclick = async (ev)=>{
-          const id = ev.currentTarget.getAttribute("data-id");
-          const name = ev.currentTarget.getAttribute("data-name");
-          const artists = ev.currentTarget.getAttribute("data-artists");
-          const msgEl = document.getElementById(`msg-${id}`);
-          const jsonEl = document.getElementById(`json-${id}`);
-          msgEl.textContent = "Calling Soundstat…";
-          msgEl.className = "muted";
-          jsonEl.textContent = "";
-          try{
-            const data = await soundstatFetch(id);
-            jsonEl.textContent = JSON.stringify(data, null, 2);
-            msgEl.textContent = `OK for "${name}" — ${artists}`;
-            msgEl.className = "ok";
-            document.getElementById("status").textContent = `Fetched Soundstat for: ${name} — ${artists}`;
-          }catch(e){
-            console.error(e);
-            msgEl.textContent = e.message || "Error";
-            msgEl.className = "err";
-            document.getElementById("status").textContent = `Soundstat error for: ${name}`;
-          }
-        };
-      });
-
-    }catch(e){
-      status.textContent = "Error loading tracks: "+e.message;
-    }
-  };
 })();
 </script>
 </body>
