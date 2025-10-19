@@ -90,12 +90,25 @@
 
 <script>
 /* ========================
-   CONFIG — keep your existing CLIENT_ID etc. here.
-   (If you pasted over your old file, re-add CLIENT_ID/TRACK_ID/etc.)
+   CONFIG — Fetch secrets dynamically
 ======================== */
-const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";            // from developer dashboard
-const SCOPES = ["playlist-modify-public","playlist-modify-private","user-read-private"].join(" ");
-const REDIRECT_URI = window.location.origin + window.location.pathname;
+let CLIENT_ID = "";
+let SCOPES = "";
+let REDIRECT_URI = "";
+
+async function fetchSecrets() {
+  try {
+    const response = await fetch('/api/secrets'); // Replace with your API endpoint
+    if (!response.ok) throw new Error("Failed to fetch secrets");
+    const secrets = await response.json();
+    CLIENT_ID = secrets.SPOTIFY_CLIENT_ID;
+    SCOPES = secrets.SCOPES || "playlist-modify-public playlist-modify-private user-read-private";
+    REDIRECT_URI = secrets.REDIRECT_URI || (window.location.origin + window.location.pathname);
+  } catch (error) {
+    console.error("Error fetching secrets:", error);
+    alert("Failed to load configuration. Please try again later.");
+  }
+}
 
 /* ===== Minimal logger reused from earlier ===== */
 const logEl = document.getElementById("log");
@@ -303,7 +316,7 @@ document.getElementById("loginBtn").addEventListener("click", beginLogin);
 document.getElementById("createBtn").addEventListener("click", createDemoPlaylist);
 
 document.getElementById("loadCsvBtn").addEventListener("click", async () => {
-  const path = document.getElementById("csvPath").value.trim() || "songs.csv";
+  const path = document.getElementById("csvPath").value.trim() || "spotify_master_database.csv";
   try {
     const data = await loadCsv(path);
     csvRows = data.map(normalizeHeaders);
@@ -329,8 +342,9 @@ document.querySelectorAll("thead th.th-sort").forEach(th => {
   });
 });
 
-/* ===== On load: handle PKCE redirect; enable create button if token present ===== */
+/* ===== On load: Fetch secrets and initialize ===== */
 (async function init() {
+  await fetchSecrets();
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
   const error = params.get("error");
