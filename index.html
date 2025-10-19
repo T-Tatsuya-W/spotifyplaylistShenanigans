@@ -57,6 +57,37 @@
   </section>
 
   <section class="card">
+    <h2>KNN Settings</h2>
+    <div class="row" style="gap: 24px; flex-wrap: wrap;">
+      <div class="filter-item">
+        <label class="filter-label" for="knnK">Number of neighbors (k):</label>
+        <input id="knnK" type="number" min="1" max="50" value="5" style="width: 80px;" />
+      </div>
+      <div class="filter-item">
+        <span class="filter-label">Dimensions:</span>
+        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
+            <input type="checkbox" id="knnDim-BPM" checked />
+            <span style="font-size: 14px;">BPM</span>
+          </label>
+          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
+            <input type="checkbox" id="knnDim-Energy" checked />
+            <span style="font-size: 14px;">Energy</span>
+          </label>
+          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
+            <input type="checkbox" id="knnDim-Dance" checked />
+            <span style="font-size: 14px;">Dance</span>
+          </label>
+          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
+            <input type="checkbox" id="knnDim-Valence" checked />
+            <span style="font-size: 14px;">Valence</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
     <h2>CSV Browser</h2>
     <div class="row" style="justify-content:space-between;">
       <div class="row">
@@ -64,7 +95,10 @@
         <input id="csvPath" type="text" value="songs.csv" class="mono" size="24" />
         <button id="loadCsvBtn">Load CSV</button>
       </div>
-      <input id="filterInput" type="search" placeholder="Filter: title / artist / album…" />
+      <div class="row">
+        <input id="filterInput" type="search" placeholder="Filter: title / artist / album…" />
+        <button id="deselectAllBtn">Deselect All</button>
+      </div>
     </div>
     <div style="height:10px"></div>
     <div class="table-wrap">
@@ -221,10 +255,124 @@ const filterState = {
   Valence: { min: 0, max: 100 }
 };
 
+const knnSettings = {
+  k: 5,
+  dimensions: {
+    BPM: true,
+    Energy: true,
+    Dance: true,
+    Valence: true
+  }
+};
+
+// Hardcoded field ranges for normalization
+const fieldRanges = {
+  BPM: { min: 10, max: 200 },
+  Energy: { min: 0, max: 100 },
+  Dance: { min: 0, max: 100 },
+  Valence: { min: 0, max: 100 }
+};
+
 function getNumericValue(val) {
   if (val === null || val === undefined || val === "") return null;
   const n = Number(String(val).replace(/[^0-9.\-]/g, ""));
   return Number.isFinite(n) ? n : null;
+}
+
+// Normalize value to 0-1 using hardcoded ranges
+function normalizeValue(val, field) {
+  if (val === null || !fieldRanges[field]) return null;
+  // Only normalize if the field dimension is enabled
+  if (!knnSettings.dimensions[field]) return null;
+  const { min, max } = fieldRanges[field];
+  const span = max - min || 1;
+  return (val - min) / span;
+}
+
+// Calculate Euclidean distance in enabled dimensions
+function calculateDistance(row1, row2) {
+  let sumSquares = 0;
+  let activeCount = 0;
+  
+  Object.keys(knnSettings.dimensions).forEach(field => {
+    if (!knnSettings.dimensions[field]) return;
+    
+    const val1 = getNumericValue(row1[field]);
+    const val2 = getNumericValue(row2[field]);
+    
+    if (val1 !== null && val2 !== null) {
+      const norm1 = normalizeValue(val1, field);
+      const norm2 = normalizeValue(val2, field);
+      
+      if (norm1 !== null && norm2 !== null) {
+        const diff = norm1 - norm2;
+        sumSquares += diff * diff;
+        activeCount++;
+      }
+    }
+  });
+  
+  return activeCount === 0 ? Infinity : Math.sqrt(sumSquares);
+}
+
+// Find k nearest neighbors for a row in csvRows, optionally excluding specific indices
+function findNearestNeighbors(csvRowIdx, excludeSet = null) {
+  const k = knnSettings.k;
+  const targetRow = csvRows[csvRowIdx];
+  
+  const distances = csvRows.map((row, idx) => ({
+    idx,
+    distance: idx === csvRowIdx ? Infinity : calculateDistance(targetRow, row)
+  }));
+  
+  // Filter out excluded indices
+  const filtered = distances.filter(d => !excludeSet || !excludeSet.has(d.idx));
+  filtered.sort((a, b) => a.distance - b.distance);
+  return filtered.slice(0, k).map(d => d.idx);
+}
+
+// Select neighbors in the table: finds them in viewRows and checks them
+function selectNeighbors(csvRowIdx) {
+  // Build set of already selected csvRow indices
+  const alreadySelected = new Set();
+  alreadySelected.add(csvRowIdx); // Always exclude the target song itself
+  
+  document.querySelectorAll(".rowCheckbox:checked").forEach(cb => {
+    const idx = parseInt(cb.dataset.idx);
+    const row = viewRows[idx];
+    if (row) {
+      alreadySelected.add(csvRows.indexOf(row));
+    }
+  });
+  
+  // Find k neighbors excluding already selected
+  const neighborCsvIndices = findNearestNeighbors(csvRowIdx, alreadySelected);
+  
+  // Check target song if not already checked
+  const targetViewIdx = viewRows.findIndex(r => csvRows.indexOf(r) === csvRowIdx);
+  if (targetViewIdx !== -1) {
+    const checkbox = document.querySelector(`.rowCheckbox[data-idx="${targetViewIdx}"]`);
+    if (checkbox && !checkbox.checked) {
+      checkbox.click();
+    }
+  }
+  
+  // Check the neighbors (they should all be unselected at this point)
+  let addedCount = 0;
+  for (const nCsvIdx of neighborCsvIndices) {
+    const nViewIdx = viewRows.findIndex(r => csvRows.indexOf(r) === nCsvIdx);
+    if (nViewIdx !== -1) {
+      const checkbox = document.querySelector(`.rowCheckbox[data-idx="${nViewIdx}"]`);
+      if (checkbox && !checkbox.checked) {
+        checkbox.click();
+        addedCount++;
+      }
+    }
+  }
+  
+  updateSelectedCount();
+  updateScatterPlot();
+  log(`Added ${addedCount} new neighbors to selection`, "ok");
 }
 
 function buildHistogram(field, binCount = 10) {
@@ -408,7 +556,8 @@ function renderScatterPlot() {
         ctx.stroke();
       }
 
-      pointMap[pointIndex] = { idx, x, y, radius: pointRadius + 2, title: row.Title, artist: row.Artist };
+      const csvRowIdx = csvRows.indexOf(row);
+      pointMap[pointIndex] = { idx, x, y, radius: pointRadius + 2, title: row.Title, artist: row.Artist, csvRowIdx };
       pointIndex++;
     }
   });
@@ -463,9 +612,10 @@ function renderTable() {
 
   const rowsHtml = viewRows.map((r, idx) => {
     const spotifyUrl = r.Spotify_URL || (r.Spotify_Track_ID ? `https://open.spotify.com/track/${r.Spotify_Track_ID}` : "");
-    return `<tr data-uri="${escapeHTML(r.Spotify_URI || "")}">
+    const csvRowIdx = csvRows.indexOf(r);
+    return `<tr data-uri="${escapeHTML(r.Spotify_URI || "")}" data-csv-idx="${csvRowIdx}">
       <td><input type="checkbox" class="rowCheckbox" data-idx="${idx}" /></td>
-      <td>${escapeHTML(r.Title ?? "")}</td>
+      <td><button class="knn-btn" title="Find similar tracks">🔍</button> ${escapeHTML(r.Title ?? "")}</td>
       <td>${escapeHTML(r.Artist ?? r.Spotify_Artists ?? "")}</td>
       <td>${escapeHTML(r.Release ?? r.Spotify_Release_Date ?? "")}</td>
       <td class="right">${escapeHTML(r.BPM ?? "")}</td>
@@ -489,9 +639,16 @@ function renderTable() {
     });
   });
 
+  document.querySelectorAll(".knn-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const csvRowIdx = parseInt(btn.closest("tr").dataset.csvIdx);
+      selectNeighbors(csvRowIdx);
+    });
+  });
+
   document.querySelectorAll("tbody tr").forEach(tr => {
     tr.addEventListener("click", (e) => {
-      if (e.target.tagName === "A") return;
+      if (e.target.tagName === "A" || e.target.tagName === "BUTTON") return;
       if (e.target.type === "checkbox") return;
       const checkbox = tr.querySelector(".rowCheckbox");
       if (checkbox) {
@@ -499,6 +656,12 @@ function renderTable() {
         updateSelectedCount();
         updateScatterPlot();
       }
+    });
+    
+    tr.addEventListener("dblclick", (e) => {
+      if (e.target.tagName === "A") return;
+      const csvRowIdx = parseInt(tr.dataset.csvIdx);
+      selectNeighbors(csvRowIdx);
     });
   });
 
@@ -584,6 +747,9 @@ document.getElementById("loadCsvBtn").addEventListener("click", async () => {
     csvRows = data.map(normalizeHeaders);
     renderFilters();
     renderTable();
+    // Do NOT auto-select all checkboxes
+    updateSelectedCount();
+    updateScatterPlot();
     log(`Loaded ${csvRows.length} rows.`, "ok");
   } catch (e) {
     console.error(e);
@@ -612,13 +778,19 @@ document.getElementById("selectAll").addEventListener("change", (e) => {
   updateScatterPlot();
 });
 
+document.getElementById("deselectAllBtn").addEventListener("click", () => {
+  document.querySelectorAll(".rowCheckbox").forEach(cb => cb.checked = false);
+  document.getElementById("selectAll").checked = false;
+  updateSelectedCount();
+  updateScatterPlot();
+});
+
 document.getElementById("scatterPlot").addEventListener("click", (e) => {
   const canvas = document.getElementById("scatterPlot");
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
 
-  // Find closest point
   let closestIdx = null;
   let closestDist = Infinity;
   
@@ -637,6 +809,28 @@ document.getElementById("scatterPlot").addEventListener("click", (e) => {
       updateSelectedCount();
       updateScatterPlot();
     }
+  }
+});
+
+document.getElementById("scatterPlot").addEventListener("dblclick", (e) => {
+  const canvas = document.getElementById("scatterPlot");
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  let closestPoint = null;
+  let closestDist = Infinity;
+  
+  Object.entries(pointMap).forEach(([_, point]) => {
+    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
+    if (dist < closestDist) {
+      closestDist = dist;
+      closestPoint = point;
+    }
+  });
+
+  if (closestDist <= 10 && closestPoint) {
+    selectNeighbors(closestPoint.csvRowIdx);
   }
 });
 
@@ -668,13 +862,11 @@ document.getElementById("scatterPlot").addEventListener("mousemove", (e) => {
 
   const tooltip = document.getElementById("scatterTooltip");
   if (foundPoint && closestDist <= 10) {
-    tooltip.textContent = `${foundPoint.title} • ${foundPoint.artist}`;
+    tooltip.textContent = `${foundPoint.title} • ${foundPoint.artist} (double-click to find neighbors)`;
     tooltip.style.display = "block";
     
     let tooltipX = e.clientX + 12;
     let tooltipY = e.clientY - 20;
-    
-    // Clamp to viewport
     tooltipX = Math.max(0, Math.min(tooltipX, window.innerWidth - 250));
     tooltipY = Math.max(0, tooltipY);
     
@@ -689,6 +881,34 @@ document.getElementById("scatterPlot").addEventListener("mouseleave", () => {
   hoveredPointIdx = null;
   document.getElementById("scatterTooltip").style.display = "none";
   renderScatterPlot();
+});
+
+// Settings event listeners
+document.getElementById("knnK").addEventListener("change", (e) => {
+  const val = parseInt(e.target.value);
+  if (val >= 1 && val <= 50) {
+    knnSettings.k = val;
+    log(`KNN k set to ${val}`, "ok");
+  }
+});
+
+["BPM", "Energy", "Dance", "Valence"].forEach(dim => {
+  const checkbox = document.getElementById(`knnDim-${dim}`);
+  // Ensure checkbox reflects current knnSettings state
+  checkbox.checked = knnSettings.dimensions[dim];
+  
+  checkbox.addEventListener("change", (e) => {
+    knnSettings.dimensions[dim] = e.target.checked;
+    const active = Object.values(knnSettings.dimensions).filter(Boolean).length;
+    if (active === 0) {
+      log("Warning: At least one dimension must be enabled.", "err");
+      e.target.checked = true;
+      checkbox.checked = true;
+      knnSettings.dimensions[dim] = true;
+    } else {
+      log(`${dim} ${e.target.checked ? "enabled" : "disabled"}`, "ok");
+    }
+  });
 });
 
 (async function init() {
