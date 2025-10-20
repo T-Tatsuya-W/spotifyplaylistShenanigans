@@ -553,7 +553,7 @@
     const REDIRECT_URI = window.location.origin + window.location.pathname;
 
     const numericFields = ["BPM", "Energy", "Dance", "Valence"];
-    const scatterFields = { x: "Energy", y: "Valence" };
+    const scatterFields = { x: "Valence", y: "Energy" };
 
     const dom = {
       log: document.getElementById("log"),
@@ -1092,9 +1092,9 @@
       ctx.save();
       ctx.translate(12, size / 2);
       ctx.rotate(-Math.PI / 2);
-      ctx.fillText("Valence", 0, 0);
+      ctx.fillText("Energy", 0, 0);
       ctx.restore();
-      ctx.fillText("Energy", size / 2, size - 12);
+      ctx.fillText("Valence", size / 2, size - 12);
 
       points.forEach(point => {
         ctx.beginPath();
