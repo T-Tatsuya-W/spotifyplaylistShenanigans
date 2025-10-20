@@ -73,6 +73,14 @@
       flex-wrap: wrap;
     }
 
+    .section-title .action-group {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
     .muted { color: var(--muted); }
 
     .control-stack {
@@ -117,6 +125,16 @@
     button:not(:disabled):hover {
       transform: translateY(-1px);
       box-shadow: 0 10px 20px -12px rgba(16, 18, 26, 0.9);
+    }
+
+    .ghost-button {
+      background: transparent;
+      color: #10121a;
+      border: 1px solid var(--border);
+    }
+
+    .ghost-button:not(:disabled):hover {
+      background: rgba(16, 18, 26, 0.04);
     }
 
     .auth-bar {
@@ -203,8 +221,35 @@
       gap: 12px;
     }
 
+    details.mini-fold {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #f9fafb;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    details.mini-fold summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
     details.fold[open] summary {
       border-bottom: 1px solid var(--border);
+    }
+
+    details.fold summary::after,
+    details.mini-fold summary::after {
+      content: "▾";
+      font-size: 12px;
+      opacity: 0.65;
+      transition: transform 0.2s ease;
     }
 
     details.fold summary::-webkit-details-marker { display: none; }
@@ -213,6 +258,27 @@
       padding: 18px 20px 24px;
       display: grid;
       gap: 20px;
+    }
+
+    details.mini-fold[open] summary {
+      border-bottom: 1px solid var(--border);
+    }
+
+    details.mini-fold summary::-webkit-details-marker { display: none; }
+
+    details.fold[open] summary::after,
+    details.mini-fold[open] summary::after {
+      transform: rotate(180deg);
+    }
+
+    details.mini-fold .mini-fold-body {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    details.mini-fold .mini-fold-body input[type="search"] {
+      width: 100%;
     }
 
     .filters-grid {
@@ -250,15 +316,38 @@
     .knn-dims {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px 16px;
-      font-size: 13px;
+      gap: 12px;
     }
 
-    .knn-dims label {
-      font-weight: 500;
-      display: flex;
-      gap: 6px;
-      align-items: center;
+    .knn-dims .knn-dim-btn {
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: #fff;
+      color: #10121a;
+      padding: 12px 18px;
+      min-width: 120px;
+      text-align: center;
+      font-weight: 600;
+      transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+      flex: 1 1 140px;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .knn-dims .knn-dim-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 10px 20px -15px rgba(29, 185, 84, 0.7);
+    }
+
+    .knn-dims .knn-dim-btn:not(:disabled):hover {
+      transform: none;
+    }
+
+    .knn-dims .knn-dim-btn:focus-visible {
+      outline: 3px solid rgba(29, 185, 84, 0.35);
+      outline-offset: 2px;
     }
 
     .table-wrap {
@@ -355,31 +444,28 @@
       </div>
     </header>
 
-    <section class="card">
-      <div class="section-title">
-        <h2>CSV Browser</h2>
-        <span class="muted">Tip: double-click the scatter to grab similar songs.</span>
-      </div>
-      <div class="control-stack">
+    <details class="fold" id="csvBrowserFold" open>
+      <summary>
+        CSV Browser
+        <span class="muted" style="font-size: 12px;">Tip: double-click the scatter to grab similar songs.</span>
+      </summary>
+      <div class="fold-body">
         <div class="control-row">
           <label for="csvPath">CSV file</label>
           <input id="csvPath" type="text" class="mono" value="songs.csv" />
           <button id="loadCsvBtn">Load CSV</button>
         </div>
-        <div class="control-row">
-          <input id="filterInput" type="search" placeholder="Search title, artist, or album" />
-          <div class="control-row" style="gap: 10px;">
-            <button id="deselectAllBtn" type="button">Deselect All</button>
-          </div>
-        </div>
       </div>
-    </section>
+    </details>
 
     <section class="card scatter-card">
       <div class="scatter-header">
         <div class="section-title">
           <h2>Energy vs. Valence</h2>
-          <button id="resetFiltersBtn" type="button" style="background: transparent; color: #10121a; border: 1px solid var(--border);">Reset filters</button>
+          <div class="action-group">
+            <button id="resetFiltersBtn" type="button" class="ghost-button">Reset filters</button>
+            <button id="deselectAllBtn" type="button" class="ghost-button">Deselect All</button>
+          </div>
         </div>
         <div class="scatter-actions">
           <button id="scatterKnnBtn" type="button" disabled>Find neighbours</button>
@@ -417,6 +503,12 @@
         <span class="muted" style="font-size: 12px;">Tap a row to toggle selection. Use the headers to sort.</span>
       </summary>
       <div class="fold-body">
+        <details class="mini-fold" id="tableSearchFold">
+          <summary>Search tracks</summary>
+          <div class="mini-fold-body">
+            <input id="filterInput" type="search" placeholder="Search title, artist, or album" />
+          </div>
+        </details>
         <div class="control-row" style="justify-content: space-between;">
           <div class="control-row" style="gap: 10px;">
             <label class="muted" for="selectAll">Select visible</label>
@@ -849,9 +941,13 @@
     function buildKnnControls() {
       dom.knnDimContainer.innerHTML = "";
       numericFields.forEach(field => {
-        const label = document.createElement("label");
-        label.innerHTML = `<input type="checkbox" data-dim="${field}" ${state.knn.dimensions[field] ? "checked" : ""} /> ${field}`;
-        dom.knnDimContainer.appendChild(label);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `knn-dim-btn${state.knn.dimensions[field] ? " active" : ""}`;
+        button.dataset.dim = field;
+        button.textContent = field;
+        button.setAttribute("aria-pressed", state.knn.dimensions[field] ? "true" : "false");
+        dom.knnDimContainer.appendChild(button);
       });
     }
 
@@ -1161,11 +1257,18 @@
         const playlistId = newPl.json.id;
         log(`Created: ${newPl.json.name}`, "ok");
         log(`Adding ${selectedUris.length} track(s) to playlist…`);
-        const addResp = await apiFetch(`/playlists/${playlistId}/tracks`, {
-          method: "POST",
-          body: JSON.stringify({ uris: selectedUris })
-        });
-        if (!addResp.ok) throw new Error(JSON.stringify(addResp.json));
+        const chunkSize = 100;
+        let addedCount = 0;
+        for (let i = 0; i < selectedUris.length; i += chunkSize) {
+          const batch = selectedUris.slice(i, i + chunkSize);
+          const addResp = await apiFetch(`/playlists/${playlistId}/tracks`, {
+            method: "POST",
+            body: JSON.stringify({ uris: batch })
+          });
+          if (!addResp.ok) throw new Error(JSON.stringify(addResp.json));
+          addedCount += batch.length;
+          log(`Added ${addedCount}/${selectedUris.length} track(s)…`, "ok");
+        }
         log(`Added ${selectedUris.length} track(s) successfully!`, "ok");
       } catch (err) {
         log(`Error: ${err.message}`, "err");
@@ -1249,18 +1352,19 @@
         }
       });
 
-      dom.knnDimContainer.addEventListener("change", event => {
-        const checkbox = event.target;
-        if (checkbox.tagName !== "INPUT") return;
-        const field = checkbox.dataset.dim;
-        state.knn.dimensions[field] = checkbox.checked;
-        if (!Object.values(state.knn.dimensions).some(Boolean)) {
-          checkbox.checked = true;
-          state.knn.dimensions[field] = true;
+      dom.knnDimContainer.addEventListener("click", event => {
+        const button = event.target.closest(".knn-dim-btn");
+        if (!button) return;
+        const field = button.dataset.dim;
+        const nextState = !state.knn.dimensions[field];
+        if (!nextState && Object.values(state.knn.dimensions).filter(Boolean).length === 1) {
           log("At least one dimension must remain enabled.", "err");
           return;
         }
-        log(`${field} ${checkbox.checked ? "enabled" : "disabled"}.`, "ok");
+        state.knn.dimensions[field] = nextState;
+        button.classList.toggle("active", nextState);
+        button.setAttribute("aria-pressed", nextState ? "true" : "false");
+        log(`${field} ${nextState ? "enabled" : "disabled"}.`, "ok");
         scheduleScatterRender(true);
       });
 
