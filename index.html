@@ -5,941 +5,1282 @@
   <title>Spotify CSV Browser</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --pad: 12px; --radius: 12px; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 32px; }
-    h1, h2 { margin: 0 0 12px; }
-    section { margin: 28px 0; }
-    button, input { padding: 10px 14px; font-size: 15px; }
-    #log { white-space: pre-wrap; border: 1px solid #ddd; padding: var(--pad); border-radius: var(--radius); margin-top: 12px; font-size: 14px; max-height: 200px; overflow-y: auto; }
-    .ok { color: #087443; } .err { color: #a40000; }
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --card: #fff;
+      --border: #e2e5ea;
+      --radius: 14px;
+      --pad: 18px;
+      --muted: #5d6470;
+      --accent: #1db954;
+      font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
 
-    .card { border: 1px solid #e5e5e5; border-radius: var(--radius); padding: var(--pad); }
-    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    .muted { color: #666; font-size: 13px; }
+    * { box-sizing: border-box; }
 
-    .table-wrap { border: 1px solid #e5e5e5; border-radius: var(--radius); overflow: hidden; }
-    table { border-collapse: collapse; width: 100%; font-size: 14px; }
-    thead th { background: #fafafa; font-weight: 600; text-align: left; border-bottom: 1px solid #eee; padding: 10px; cursor: pointer; user-select: none; }
-    tbody td { border-bottom: 1px solid #f3f3f3; padding: 8px 10px; vertical-align: top; }
-    tbody tr:hover { background: #fffdf7; }
-    .sticky { position: sticky; top: 0; z-index: 1; }
-    .scroll { max-height: 520px; overflow: auto; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
-    .right { text-align: right; }
-    .link { text-decoration: none; }
-    .th-sort::after { content: attr(data-sort); margin-left: 6px; font-size: 11px; color: #999; }
-    .row-space { justify-content: space-between; }
-    .filter-item { display: flex; flex-direction: column; gap: 8px; }
-    .filter-label { font-weight: 600; font-size: 14px; }
-    .filter-stats { font-size: 12px; color: #666; }
-    .histogram { width: 100%; height: 40px; display: flex; align-items: flex-end; gap: 1px; margin: 6px 0; background: #fafafa; border-radius: 6px; padding: 2px; box-sizing: border-box; }
-    .histogram-bar { flex: 1; background: #0084ff; border-radius: 1px; min-height: 1px; transition: background 0.2s; }
-    .histogram-bar:hover { background: #0066cc; }
-    .range-slider-container { display: flex; flex-direction: column; gap: 6px; }
-    .range-slider { width: 100%; height: 6px; cursor: pointer; }
-    .range-values { display: flex; justify-content: space-between; font-size: 11px; color: #666; }
-    input[type="range"] { width: 100%; cursor: pointer; }
-    .scatter-container { margin-top: 20px; display: flex; flex-direction: column; align-items: center; }
-    .scatter-canvas { border: 1px solid #e5e5e5; border-radius: var(--radius); cursor: crosshair; width: 100%; height: auto; max-width: 800px; aspect-ratio: 1; }
-    .scatter-label { font-size: 12px; color: #666; margin-top: 8px; }
-    .scatter-tooltip { position: fixed; background: #333; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 12px; pointer-events: none; white-space: nowrap; z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,0.2); display: none; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: #10121a;
+      min-height: 100vh;
+    }
+
+    main.app {
+      margin: 0 auto;
+      max-width: 1120px;
+      padding: 28px 20px 80px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    header.app-header {
+      display: grid;
+      gap: 12px;
+    }
+
+    header.app-header h1 {
+      font-size: clamp(28px, 4vw, 36px);
+      margin: 0;
+    }
+
+    header.app-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--pad);
+      box-shadow: 0 18px 35px -30px rgba(20, 32, 45, 0.6);
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .muted { color: var(--muted); }
+
+    .control-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .control-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    label { font-weight: 600; font-size: 14px; }
+
+    input[type="text"],
+    input[type="search"],
+    input[type="number"],
+    button {
+      font: inherit;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 9px 13px;
+      background: #fff;
+    }
+
+    button {
+      background: #10121a;
+      color: #fff;
+      cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    button:not(:disabled):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px -12px rgba(16, 18, 26, 0.9);
+    }
+
+    .auth-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 20px;
+      margin-top: 6px;
+      font-size: 14px;
+    }
+
+    .auth-bar input[type="text"] {
+      min-width: min(260px, 100%);
+    }
+
+    .scatter-card {
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .scatter-header {
+      padding: var(--pad);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    canvas#scatterPlot {
+      width: 100%;
+      height: auto;
+      display: block;
+      max-height: min(70vh, 580px);
+      touch-action: none;
+    }
+
+    .scatter-label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .scatter-tooltip {
+      position: fixed;
+      background: rgba(16, 18, 26, 0.92);
+      color: #fff;
+      padding: 8px 11px;
+      border-radius: 8px;
+      font-size: 12px;
+      pointer-events: none;
+      box-shadow: 0 14px 28px -18px rgba(16, 18, 26, 0.9);
+      display: none;
+      z-index: 20;
+      max-width: clamp(180px, 50vw, 320px);
+    }
+
+    details.fold {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--card);
+      padding: 0;
+      overflow: hidden;
+    }
+
+    details.fold summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 16px 20px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    details.fold[open] summary {
+      border-bottom: 1px solid var(--border);
+    }
+
+    details.fold summary::-webkit-details-marker { display: none; }
+
+    details.fold .fold-body {
+      padding: 18px 20px 24px;
+      display: grid;
+      gap: 20px;
+    }
+
+    .filters-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 20px;
+    }
+
+    .filter-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(248,249,252,0.95));
+    }
+
+    .filter-card .range-values {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .filter-card input[type="range"] {
+      width: 100%;
+    }
+
+    .knn-grid {
+      display: grid;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .knn-dims {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      font-size: 13px;
+    }
+
+    .knn-dims label {
+      font-weight: 500;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      background: #f9fafb;
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    thead th:first-child { width: 42px; cursor: default; }
+
+    thead th[data-sort]:not([data-sort=""])::after {
+      content: attr(data-sort);
+      margin-left: 6px;
+      font-size: 11px;
+      color: #9aa1ab;
+    }
+
+    tbody td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #f1f3f6;
+      vertical-align: top;
+    }
+
+    tbody tr:hover { background: #fafcff; }
+
+    td.right { text-align: right; }
+
+    a.link {
+      color: #1b4bff;
+      text-decoration: none;
+    }
+
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Roboto Mono", monospace; font-size: 13px; }
+
+    #log {
+      max-height: 220px;
+      overflow-y: auto;
+      font-size: 13px;
+      display: grid;
+      gap: 4px;
+    }
+
+    #log .ok { color: #087443; }
+    #log .err { color: #a40000; }
+
+    @media (max-width: 720px) {
+      main.app { padding: 20px 14px 60px; }
+      .control-row { flex-direction: column; align-items: stretch; }
+      button, input { width: 100%; }
+      header.app-header h1 { font-size: 26px; }
+      .auth-bar { flex-direction: column; align-items: stretch; }
+      .auth-bar > * { width: 100%; }
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js" defer></script>
 </head>
-  <h1>Spotify CSV Browser</h1>
-  <p class="muted">Load, filter, sort, and browse track data from CSV files.</p>
-
-  <section class="card">
-    <h2>Numeric Filters</h2>
-    <div id="filtersContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 32px;">
-      <!-- Sliders will be inserted here -->
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>KNN Settings</h2>
-    <div class="row" style="gap: 24px; flex-wrap: wrap;">
-      <div class="filter-item">
-        <label class="filter-label" for="knnK">Number of neighbors (k):</label>
-        <input id="knnK" type="number" min="1" max="50" value="5" style="width: 80px;" />
+<body>
+  <main class="app">
+    <header class="app-header card">
+      <div>
+        <h1>Spotify CSV Browser</h1>
+        <p>Load a CSV, explore tracks visually, and push your favourites into a Spotify playlist.</p>
       </div>
-      <div class="filter-item">
-        <span class="filter-label">Dimensions:</span>
-        <div style="display: flex; gap: 16px; flex-wrap: wrap;">
-          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
-            <input type="checkbox" id="knnDim-BPM" checked />
-            <span style="font-size: 14px;">BPM</span>
-          </label>
-          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
-            <input type="checkbox" id="knnDim-Energy" checked />
-            <span style="font-size: 14px;">Energy</span>
-          </label>
-          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
-            <input type="checkbox" id="knnDim-Dance" checked />
-            <span style="font-size: 14px;">Dance</span>
-          </label>
-          <label style="display: flex; gap: 6px; align-items: center; cursor: pointer;">
-            <input type="checkbox" id="knnDim-Valence" checked />
-            <span style="font-size: 14px;">Valence</span>
-          </label>
+      <div class="auth-bar">
+        <div class="control-row" style="gap: 10px 16px;">
+          <button id="loginBtn">Log in with Spotify</button>
+          <span id="authStatus" class="muted">Not logged in</span>
+          <span class="muted">•</span>
+          <span id="selectedCount" class="muted">No tracks selected</span>
+        </div>
+        <div class="control-row" style="gap: 12px;">
+          <input id="playlistName" type="text" placeholder="Playlist name" value="PKCE Demo Playlist" />
+          <button id="createPlaylistBtn" disabled>Create &amp; Add Selected Tracks</button>
         </div>
       </div>
-    </div>
-  </section>
+    </header>
 
-  <section class="card">
-    <h2>CSV Browser</h2>
-    <div class="row" style="justify-content:space-between;">
-      <div class="row">
-        <label for="csvPath" class="muted">CSV path:</label>
-        <input id="csvPath" type="text" value="songs.csv" class="mono" size="24" />
-        <button id="loadCsvBtn">Load CSV</button>
+    <section class="card">
+      <div class="section-title">
+        <h2>CSV Browser</h2>
+        <span class="muted">Tip: double-click the scatter to grab similar songs.</span>
       </div>
-      <div class="row">
-        <input id="filterInput" type="search" placeholder="Filter: title / artist / album…" />
-        <button id="deselectAllBtn">Deselect All</button>
+      <div class="control-stack">
+        <div class="control-row">
+          <label for="csvPath">CSV file</label>
+          <input id="csvPath" type="text" class="mono" value="songs.csv" />
+          <button id="loadCsvBtn">Load CSV</button>
+        </div>
+        <div class="control-row">
+          <input id="filterInput" type="search" placeholder="Search title, artist, or album" />
+          <div class="control-row" style="gap: 10px;">
+            <button id="deselectAllBtn" type="button">Deselect All</button>
+          </div>
+        </div>
       </div>
-    </div>
-    <div style="height:10px"></div>
-    <div class="table-wrap">
-      <div class="scroll">
-        <table id="csvTable">
-          <thead>
-            <tr>
-              <th class="sticky"><input type="checkbox" id="selectAll" /></th>
-              <th data-key="Title" class="sticky th-sort" data-sort="">Title</th>
-              <th data-key="Artist" class="sticky th-sort" data-sort="">Artist</th>
-              <th data-key="Release" class="sticky th-sort" data-sort="">Release</th>
-              <th data-key="BPM" class="sticky right th-sort" data-sort="">BPM</th>
-              <th data-key="Energy" class="sticky right th-sort" data-sort="">Energy</th>
-              <th data-key="Dance" class="sticky right th-sort" data-sort="">Dance</th>
-              <th data-key="Valence" class="sticky right th-sort" data-sort="">Valence</th>
-              <th data-key="Spotify_URL" class="sticky">Open</th>
-            </tr>
-          </thead>
-          <tbody id="csvBody">
-          </tbody>
-        </table>
+    </section>
+
+    <section class="card scatter-card">
+      <div class="scatter-header">
+        <div class="section-title">
+          <h2>Energy vs. Valence</h2>
+          <button id="resetFiltersBtn" type="button" style="background: transparent; color: #10121a; border: 1px solid var(--border);">Reset filters</button>
+        </div>
+        <span class="scatter-label">Click points to toggle selection • Double-click a point to fetch KNN neighbours</span>
       </div>
-    </div>
-    <div class="muted" style="margin-top:8px">Tip: click headers to sort; use the filter to search by title, artist, or album. Click any row to select/deselect.</div>
-    <div class="scatter-container">
-      <canvas id="scatterPlot" class="scatter-canvas"></canvas>
+      <canvas id="scatterPlot"></canvas>
       <div id="scatterTooltip" class="scatter-tooltip"></div>
-      <div class="scatter-label">Energy (x-axis) vs. Valence (y-axis) • Click points to select tracks</div>
-    </div>
-  </section>
+    </section>
 
-  <section class="card">
-    <h2>Playlist & Sync</h2>
-    <div class="row row-space">
-      <div class="row">
-        <button id="loginBtn">Log in with Spotify</button>
-        <span id="authStatus" class="muted"></span>
-        <span style="margin: 0 8px; color: #ddd;">|</span>
-        <span id="selectedCount" class="muted"></span>
+    <details class="fold" id="filtersFold" open>
+      <summary>
+        Filters &amp; Settings
+        <span class="muted" style="font-size: 12px;">Refine the table or tweak the neighbour search.</span>
+      </summary>
+      <div class="fold-body">
+        <div class="filters-grid" id="filtersContainer"></div>
+        <div class="knn-grid">
+          <div class="control-row" style="align-items: flex-end;">
+            <label for="knnK">KNN neighbours (k)</label>
+            <input id="knnK" type="number" min="1" max="50" value="5" style="width: 90px;" />
+          </div>
+          <div>
+            <div class="muted" style="font-size: 12px; margin-bottom: 8px;">Dimensions</div>
+            <div class="knn-dims" id="knnDimContainer"></div>
+          </div>
+        </div>
       </div>
-      <div class="row">
-        <input id="playlistName" type="text" placeholder="Playlist name" value="PKCE Demo Playlist" />
-        <button id="createPlaylistBtn" disabled>Create & Add Selected Tracks</button>
+    </details>
+
+    <details class="fold" id="tableFold" open>
+      <summary>
+        Track List
+        <span class="muted" style="font-size: 12px;">Tap a row to toggle selection. Use the headers to sort.</span>
+      </summary>
+      <div class="fold-body">
+        <div class="control-row" style="justify-content: space-between;">
+          <div class="control-row" style="gap: 10px;">
+            <label class="muted" for="selectAll">Select visible</label>
+            <input id="selectAll" type="checkbox" />
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="csvTable">
+            <thead>
+              <tr>
+                <th></th>
+                <th data-key="Title" data-sort="">Title</th>
+                <th data-key="Artist" data-sort="">Artist</th>
+                <th data-key="Release" data-sort="">Release</th>
+                <th data-key="BPM" data-sort="" class="right">BPM</th>
+                <th data-key="Energy" data-sort="" class="right">Energy</th>
+                <th data-key="Dance" data-sort="" class="right">Dance</th>
+                <th data-key="Valence" data-sort="" class="right">Valence</th>
+                <th data-key="Spotify_URL" data-sort="">Open</th>
+              </tr>
+            </thead>
+            <tbody id="csvBody"></tbody>
+          </table>
+        </div>
       </div>
-    </div>
-  </section>
+    </details>
 
-  <section class="card">
-    <h2>Log</h2>
-    <div id="log" aria-live="polite" style="display:none;"></div>
-  </section>
+    <details class="fold" id="logFold">
+      <summary>
+        Log
+        <span class="muted" style="font-size: 12px;">We only surface errors and Spotify sync information here.</span>
+      </summary>
+      <div class="fold-body">
+        <div id="log"></div>
+      </div>
+    </details>
+  </main>
 
-<script>
-const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";
-const SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
-const REDIRECT_URI = window.location.origin + window.location.pathname;
+  <script>
+    const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";
+    const SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
+    const REDIRECT_URI = window.location.origin + window.location.pathname;
 
-const logEl = document.getElementById("log");
-const authStatusEl = document.getElementById("authStatus");
-function log(msg, cls="") {
-  logEl.style.display = "block";
-  const p = document.createElement("div");
-  if (cls) p.className = cls;
-  p.textContent = msg;
-  logEl.appendChild(p);
-  logEl.scrollTop = logEl.scrollHeight;
-}
+    const numericFields = ["BPM", "Energy", "Dance", "Valence"];
+    const scatterFields = { x: "Energy", y: "Valence" };
 
-function setAuthStatus(msg) {
-  authStatusEl.textContent = msg;
-}
+    const dom = {
+      log: document.getElementById("log"),
+      authStatus: document.getElementById("authStatus"),
+      selectedCount: document.getElementById("selectedCount"),
+      playlistName: document.getElementById("playlistName"),
+      createPlaylistBtn: document.getElementById("createPlaylistBtn"),
+      loginBtn: document.getElementById("loginBtn"),
+      csvPath: document.getElementById("csvPath"),
+      loadCsvBtn: document.getElementById("loadCsvBtn"),
+      filterInput: document.getElementById("filterInput"),
+      selectAll: document.getElementById("selectAll"),
+      deselectAllBtn: document.getElementById("deselectAllBtn"),
+      resetFiltersBtn: document.getElementById("resetFiltersBtn"),
+      csvBody: document.getElementById("csvBody"),
+      tableHead: document.querySelector("#csvTable thead"),
+      filtersContainer: document.getElementById("filtersContainer"),
+      knnK: document.getElementById("knnK"),
+      knnDimContainer: document.getElementById("knnDimContainer"),
+      scatter: document.getElementById("scatterPlot"),
+      scatterTooltip: document.getElementById("scatterTooltip")
+    };
 
-function generateRandomString(length) {
-  const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const values = crypto.getRandomValues(new Uint8Array(length));
-  return values.reduce((acc, x) => acc + possible[x % possible.length], "");
-}
-async function sha256(plain) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plain);
-  return crypto.subtle.digest('SHA-256', data);
-}
-function base64urlencode(bytes) {
-  const str = String.fromCharCode(...new Uint8Array(bytes));
-  return btoa(str).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-}
-async function beginLogin() {
-  const codeVerifier = generateRandomString(64);
-  localStorage.setItem("code_verifier", codeVerifier);
-  const codeChallenge = base64urlencode(await sha256(codeVerifier));
-  const authUrl = new URL("https://accounts.spotify.com/authorize");
-  authUrl.search = new URLSearchParams({
-    response_type: "code",
-    client_id: CLIENT_ID,
-    scope: SCOPES,
-    code_challenge_method: "S256",
-    code_challenge: codeChallenge,
-    redirect_uri: REDIRECT_URI,
-    state: generateRandomString(16)
-  }).toString();
-  window.location.href = authUrl.toString();
-}
-async function exchangeCodeForToken(code) {
-  const codeVerifier = localStorage.getItem("code_verifier");
-  if (!codeVerifier) throw new Error("Missing code_verifier.");
-  const body = new URLSearchParams({
-    client_id: CLIENT_ID,
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: REDIRECT_URI,
-    code_verifier: codeVerifier
-  });
-  const resp = await fetch("https://accounts.spotify.com/api/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body
-  });
-  const data = await resp.json();
-  if (!resp.ok) throw new Error((data && data.error_description) || resp.statusText);
-  localStorage.setItem("access_token", data.access_token);
-  localStorage.setItem("refresh_token", data.refresh_token || "");
-  return data.access_token;
-}
-async function apiFetch(path, options = {}) {
-  const token = localStorage.getItem("access_token");
-  if (!token) throw new Error("No access token.");
-  const resp = await fetch(`https://api.spotify.com/v1${path}`, {
-    ...options,
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      ...(options.headers || {})
+    const state = {
+      rows: [],
+      view: [],
+      search: "",
+      sort: { key: "Title", dir: "asc" },
+      filters: {},
+      knn: {
+        k: 5,
+        dimensions: {
+          BPM: true,
+          Energy: true,
+          Dance: true,
+          Valence: true
+        }
+      },
+      selected: new Set(),
+      scatter: {
+        points: [],
+        dirty: true,
+        hoverId: null
+      }
+    };
+
+    function log(msg, cls = "") {
+      dom.log.style.display = "grid";
+      const el = document.createElement("div");
+      if (cls) el.className = cls;
+      el.textContent = msg;
+      dom.log.appendChild(el);
+      dom.log.scrollTop = dom.log.scrollHeight;
     }
-  });
-  if (resp.status === 401) throw new Error("Unauthorized (token expired?)");
-  const text = await resp.text();
-  try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
-  catch { return { ok: resp.ok, status: resp.status, json: text }; }
-}
 
-const $ = (s) => document.querySelector(s);
-const csvBody = $("#csvBody");
-const filterInput = $("#filterInput");
-let csvRows = [];
-let viewRows = [];
-let sortState = { key: "Title", dir: "asc" };
-let pointMap = {}; // Maps point indices to row indices
-let hoveredPointIdx = null;
+    function setAuthStatus(msg) {
+      dom.authStatus.textContent = msg;
+    }
 
-const filterState = {
-  BPM: { min: 0, max: 300 },
-  Energy: { min: 0, max: 100 },
-  Dance: { min: 0, max: 100 },
-  Valence: { min: 0, max: 100 }
-};
+    function generateRandomString(length) {
+      const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      const values = crypto.getRandomValues(new Uint8Array(length));
+      return Array.from(values, v => possible[v % possible.length]).join("");
+    }
 
-const knnSettings = {
-  k: 5,
-  dimensions: {
-    BPM: true,
-    Energy: true,
-    Dance: true,
-    Valence: true
-  }
-};
+    async function sha256(plain) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(plain);
+      return crypto.subtle.digest("SHA-256", data);
+    }
 
-// Hardcoded field ranges for normalization
-const fieldRanges = {
-  BPM: { min: 10, max: 200 },
-  Energy: { min: 0, max: 100 },
-  Dance: { min: 0, max: 100 },
-  Valence: { min: 0, max: 100 }
-};
+    function base64urlencode(bytes) {
+      const str = String.fromCharCode(...new Uint8Array(bytes));
+      return btoa(str).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    }
 
-function getNumericValue(val) {
-  if (val === null || val === undefined || val === "") return null;
-  const n = Number(String(val).replace(/[^0-9.\-]/g, ""));
-  return Number.isFinite(n) ? n : null;
-}
+    async function beginLogin() {
+      const codeVerifier = generateRandomString(64);
+      localStorage.setItem("code_verifier", codeVerifier);
+      const codeChallenge = base64urlencode(await sha256(codeVerifier));
+      const authUrl = new URL("https://accounts.spotify.com/authorize");
+      authUrl.search = new URLSearchParams({
+        response_type: "code",
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        code_challenge_method: "S256",
+        code_challenge: codeChallenge,
+        redirect_uri: REDIRECT_URI,
+        state: generateRandomString(16)
+      }).toString();
+      window.location.href = authUrl.toString();
+    }
 
-// Normalize value to 0-1 using hardcoded ranges
-function normalizeValue(val, field) {
-  if (val === null || !fieldRanges[field]) return null;
-  // Only normalize if the field dimension is enabled
-  if (!knnSettings.dimensions[field]) return null;
-  const { min, max } = fieldRanges[field];
-  const span = max - min || 1;
-  return (val - min) / span;
-}
+    async function exchangeCodeForToken(code) {
+      const codeVerifier = localStorage.getItem("code_verifier");
+      if (!codeVerifier) throw new Error("Missing code_verifier.");
+      const body = new URLSearchParams({
+        client_id: CLIENT_ID,
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI,
+        code_verifier: codeVerifier
+      });
+      const resp = await fetch("https://accounts.spotify.com/api/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error((data && data.error_description) || resp.statusText);
+      localStorage.setItem("access_token", data.access_token);
+      localStorage.setItem("refresh_token", data.refresh_token || "");
+      return data.access_token;
+    }
 
-// Calculate Euclidean distance in enabled dimensions
-function calculateDistance(row1, row2) {
-  let sumSquares = 0;
-  let activeCount = 0;
-  
-  Object.keys(knnSettings.dimensions).forEach(field => {
-    if (!knnSettings.dimensions[field]) return;
-    
-    const val1 = getNumericValue(row1[field]);
-    const val2 = getNumericValue(row2[field]);
-    
-    if (val1 !== null && val2 !== null) {
-      const norm1 = normalizeValue(val1, field);
-      const norm2 = normalizeValue(val2, field);
-      
-      if (norm1 !== null && norm2 !== null) {
-        const diff = norm1 - norm2;
-        sumSquares += diff * diff;
+    async function apiFetch(path, options = {}) {
+      const token = localStorage.getItem("access_token");
+      if (!token) throw new Error("No access token.");
+      const resp = await fetch(`https://api.spotify.com/v1${path}`, {
+        ...options,
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        }
+      });
+      if (resp.status === 401) throw new Error("Unauthorized (token expired?)");
+      const text = await resp.text();
+      try { return { ok: resp.ok, status: resp.status, json: JSON.parse(text) }; }
+      catch { return { ok: resp.ok, status: resp.status, json: text }; }
+    }
+
+    function getNumericValue(val) {
+      if (val === null || val === undefined || val === "") return null;
+      const n = Number(String(val).replace(/[^0-9.\-]/g, ""));
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function escapeHTML(str) {
+      return String(str ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function debounce(fn, wait = 160) {
+      let t;
+      return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), wait);
+      };
+    }
+
+    let viewRefreshQueued = false;
+    function scheduleViewRefresh() {
+      if (viewRefreshQueued) return;
+      viewRefreshQueued = true;
+      requestAnimationFrame(() => {
+        viewRefreshQueued = false;
+        refreshView();
+      });
+    }
+
+    let scatterRefreshQueued = false;
+    function scheduleScatterRender(recompute = false) {
+      if (recompute) state.scatter.dirty = true;
+      if (scatterRefreshQueued) return;
+      scatterRefreshQueued = true;
+      requestAnimationFrame(() => {
+        scatterRefreshQueued = false;
+        renderScatter();
+      });
+    }
+
+    function refreshView() {
+      if (!state.rows.length) {
+        dom.csvBody.innerHTML = "";
+        state.view = [];
+        scheduleScatterRender(true);
+        updateSelectedCount();
+        return;
+      }
+
+      const q = state.search;
+      const filters = state.filters;
+      const filtered = [];
+
+      for (const row of state.rows) {
+        if (q && !row._haystack.includes(q)) continue;
+        let passed = true;
+        for (const field of numericFields) {
+          const val = row._values[field];
+          if (val === null) continue;
+          const range = filters[field];
+          if (val < range.min || val > range.max) {
+            passed = false;
+            break;
+          }
+        }
+        if (passed) filtered.push(row);
+      }
+
+      const { key, dir } = state.sort;
+      filtered.sort((a, b) => {
+        const av = a[key];
+        const bv = b[key];
+        const an = getNumericValue(av);
+        const bn = getNumericValue(bv);
+        let cmp;
+        if (an !== null && bn !== null) cmp = an - bn;
+        else cmp = String(av ?? "").localeCompare(String(bv ?? ""), undefined, { numeric: true, sensitivity: "base" });
+        return dir === "asc" ? cmp : -cmp;
+      });
+
+      state.view = filtered;
+      renderTable();
+      scheduleScatterRender(true);
+      updateSelectedCount();
+    }
+
+    function renderTable() {
+      const rows = state.view;
+      if (!rows.length) {
+        dom.csvBody.innerHTML = `<tr><td colspan="9" class="muted">No rows match the current filters.</td></tr>`;
+        updateSortIndicators();
+        updateSelectAllState();
+        return;
+      }
+
+      const html = rows.map(row => {
+        const spotifyUrl = row.Spotify_URL || (row.Spotify_Track_ID ? `https://open.spotify.com/track/${row.Spotify_Track_ID}` : "");
+        const checked = state.selected.has(row._idx) ? "checked" : "";
+        return `<tr data-row-id="${row._idx}">
+          <td><input type="checkbox" class="rowCheckbox" data-row-id="${row._idx}" ${checked} /></td>
+          <td><button type="button" class="knn-btn" title="Find similar tracks">🔍</button> ${escapeHTML(row.Title)}</td>
+          <td>${escapeHTML(row.Artist || row.Spotify_Artists)}</td>
+          <td>${escapeHTML(row.Release || row.Spotify_Release_Date)}</td>
+          <td class="right">${escapeHTML(row.BPM)}</td>
+          <td class="right">${escapeHTML(row.Energy)}</td>
+          <td class="right">${escapeHTML(row.Dance)}</td>
+          <td class="right">${escapeHTML(row.Valence)}</td>
+          <td>${spotifyUrl ? `<a class="link" href="${escapeHTML(spotifyUrl)}" target="_blank" rel="noopener">Open</a>` : ""}</td>
+        </tr>`;
+      }).join("");
+
+      dom.csvBody.innerHTML = html;
+      updateSortIndicators();
+      updateSelectAllState();
+    }
+
+    function updateSortIndicators() {
+      dom.tableHead.querySelectorAll("th[data-key]").forEach(th => {
+        const key = th.dataset.key;
+        th.dataset.sort = key === state.sort.key ? (state.sort.dir === "asc" ? "▲" : "▼") : "";
+      });
+    }
+
+    function updateSelectAllState() {
+      if (!state.view.length) {
+        dom.selectAll.checked = false;
+        dom.selectAll.indeterminate = false;
+        return;
+      }
+      let checkedCount = 0;
+      for (const row of state.view) {
+        if (state.selected.has(row._idx)) checkedCount++;
+      }
+      if (checkedCount === 0) {
+        dom.selectAll.checked = false;
+        dom.selectAll.indeterminate = false;
+      } else if (checkedCount === state.view.length) {
+        dom.selectAll.checked = true;
+        dom.selectAll.indeterminate = false;
+      } else {
+        dom.selectAll.checked = false;
+        dom.selectAll.indeterminate = true;
+      }
+    }
+
+    function updateSelectedCount() {
+      const count = state.selected.size;
+      dom.selectedCount.textContent = count ? `${count} track${count === 1 ? "" : "s"} selected` : "No tracks selected";
+      if (count && localStorage.getItem("access_token")) {
+        dom.createPlaylistBtn.disabled = false;
+      } else if (!count) {
+        dom.createPlaylistBtn.disabled = true;
+      }
+      state.scatter.points.forEach(point => {
+        point.selected = state.selected.has(point.rowId);
+      });
+      scheduleScatterRender();
+    }
+
+    let filterListenersAttached = false;
+    function buildFilters() {
+      dom.filtersContainer.innerHTML = "";
+      numericFields.forEach(field => {
+        const range = state.filters[field];
+        const wrapper = document.createElement("div");
+        wrapper.className = "filter-card";
+        wrapper.dataset.field = field;
+        wrapper.innerHTML = `
+          <div class="filter-label">${field}</div>
+          <div class="range-values"><span data-role="min">${range.min}</span><span data-role="max">${range.max}</span></div>
+          <input type="range" class="filter-slider" data-field="${field}" data-bound="min" min="${range.absoluteMin}" max="${range.absoluteMax}" value="${range.min}" step="1" />
+          <input type="range" class="filter-slider" data-field="${field}" data-bound="max" min="${range.absoluteMin}" max="${range.absoluteMax}" value="${range.max}" step="1" />
+        `;
+        dom.filtersContainer.appendChild(wrapper);
+      });
+    }
+
+    function attachFilterListeners() {
+      if (filterListenersAttached) return;
+      dom.filtersContainer.addEventListener("input", (event) => {
+        const target = event.target;
+        if (!target.classList.contains("filter-slider")) return;
+        const field = target.dataset.field;
+        const bound = target.dataset.bound;
+        const value = Number(target.value);
+        const range = state.filters[field];
+        if (bound === "min") {
+          range.min = Math.min(value, range.max);
+        } else {
+          range.max = Math.max(value, range.min);
+        }
+        updateFilterLabels(field);
+        scheduleViewRefresh();
+      });
+      filterListenersAttached = true;
+    }
+
+    function updateFilterLabels(field) {
+      const range = state.filters[field];
+      const wrapper = dom.filtersContainer.querySelector(`.filter-card[data-field="${field}"]`);
+      if (!wrapper) return;
+      const minEl = wrapper.querySelector('[data-role="min"]');
+      const maxEl = wrapper.querySelector('[data-role="max"]');
+      if (minEl) minEl.textContent = range.min;
+      if (maxEl) maxEl.textContent = range.max;
+      wrapper.querySelectorAll(".filter-slider").forEach(slider => {
+        const bound = slider.dataset.bound;
+        slider.value = range[bound];
+      });
+    }
+
+    function buildKnnControls() {
+      dom.knnDimContainer.innerHTML = "";
+      numericFields.forEach(field => {
+        const label = document.createElement("label");
+        label.innerHTML = `<input type="checkbox" data-dim="${field}" ${state.knn.dimensions[field] ? "checked" : ""} /> ${field}`;
+        dom.knnDimContainer.appendChild(label);
+      });
+    }
+
+    function calculateDistance(rowA, rowB) {
+      let sumSquares = 0;
+      let activeCount = 0;
+      for (const field of numericFields) {
+        if (!state.knn.dimensions[field]) continue;
+        const a = rowA._values[field];
+        const b = rowB._values[field];
+        if (a === null || b === null) continue;
+        const { absoluteMin: min, absoluteMax: max } = state.filters[field];
+        const span = max - min || 1;
+        const normA = (a - min) / span;
+        const normB = (b - min) / span;
+        sumSquares += (normA - normB) ** 2;
         activeCount++;
       }
+      return activeCount === 0 ? Infinity : Math.sqrt(sumSquares);
     }
-  });
-  
-  return activeCount === 0 ? Infinity : Math.sqrt(sumSquares);
-}
 
-// Find k nearest neighbors for a row in csvRows, optionally excluding specific indices
-function findNearestNeighbors(csvRowIdx, excludeSet = null) {
-  const k = knnSettings.k;
-  const targetRow = csvRows[csvRowIdx];
-  
-  const distances = csvRows.map((row, idx) => ({
-    idx,
-    distance: idx === csvRowIdx ? Infinity : calculateDistance(targetRow, row)
-  }));
-  
-  // Filter out excluded indices
-  const filtered = distances.filter(d => !excludeSet || !excludeSet.has(d.idx));
-  filtered.sort((a, b) => a.distance - b.distance);
-  return filtered.slice(0, k).map(d => d.idx);
-}
+    function findNearestNeighbors(rowId, exclude = new Set()) {
+      const targetRow = state.rows[rowId];
+      if (!targetRow) return [];
+      const distances = state.rows.map((row, idx) => ({
+        idx,
+        distance: idx === rowId ? Infinity : calculateDistance(targetRow, row)
+      }));
+      const filtered = distances.filter(item => !exclude.has(item.idx));
+      filtered.sort((a, b) => a.distance - b.distance);
+      return filtered.slice(0, state.knn.k).map(item => item.idx);
+    }
 
-// Select neighbors in the table: finds them in viewRows and checks them
-function selectNeighbors(csvRowIdx) {
-  // Build set of already selected csvRow indices
-  const alreadySelected = new Set();
-  alreadySelected.add(csvRowIdx); // Always exclude the target song itself
-  
-  document.querySelectorAll(".rowCheckbox:checked").forEach(cb => {
-    const idx = parseInt(cb.dataset.idx);
-    const row = viewRows[idx];
-    if (row) {
-      alreadySelected.add(csvRows.indexOf(row));
+    function selectNeighbors(rowId) {
+      const alreadySelected = new Set(state.selected);
+      alreadySelected.add(rowId);
+      const neighbors = findNearestNeighbors(rowId, alreadySelected);
+      state.selected.add(rowId);
+      let added = 0;
+      neighbors.forEach(id => {
+        if (!state.selected.has(id)) added++;
+        state.selected.add(id);
+      });
+      updateSelectionCheckboxes();
+      updateSelectedCount();
+      log(`Added ${added} neighbouring track${added === 1 ? "" : "s"}.`, "ok");
     }
-  });
-  
-  // Find k neighbors excluding already selected
-  const neighborCsvIndices = findNearestNeighbors(csvRowIdx, alreadySelected);
-  
-  // Check target song if not already checked
-  const targetViewIdx = viewRows.findIndex(r => csvRows.indexOf(r) === csvRowIdx);
-  if (targetViewIdx !== -1) {
-    const checkbox = document.querySelector(`.rowCheckbox[data-idx="${targetViewIdx}"]`);
-    if (checkbox && !checkbox.checked) {
-      checkbox.click();
+
+    function updateSelectionCheckboxes() {
+      dom.csvBody.querySelectorAll(".rowCheckbox").forEach(cb => {
+        const rowId = Number(cb.dataset.rowId);
+        cb.checked = state.selected.has(rowId);
+      });
+      updateSelectAllState();
     }
-  }
-  
-  // Check the neighbors (they should all be unselected at this point)
-  let addedCount = 0;
-  for (const nCsvIdx of neighborCsvIndices) {
-    const nViewIdx = viewRows.findIndex(r => csvRows.indexOf(r) === nCsvIdx);
-    if (nViewIdx !== -1) {
-      const checkbox = document.querySelector(`.rowCheckbox[data-idx="${nViewIdx}"]`);
-      if (checkbox && !checkbox.checked) {
-        checkbox.click();
-        addedCount++;
+
+    function toggleSelection(rowId) {
+      if (state.selected.has(rowId)) state.selected.delete(rowId);
+      else state.selected.add(rowId);
+      updateSelectionCheckboxes();
+      updateSelectedCount();
+    }
+    function computeScatterPoints() {
+      const canvas = dom.scatter;
+      const dpr = window.devicePixelRatio || 1;
+      const width = canvas.clientWidth || canvas.parentElement.clientWidth || 520;
+      const size = Math.min(width, 720);
+      canvas.width = size * dpr;
+      canvas.height = size * dpr;
+      canvas.style.height = `${size}px`;
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const padding = 42;
+      const plotSize = size - padding * 2;
+      const rangeX = state.filters[scatterFields.x] || { absoluteMin: 0, absoluteMax: 100 };
+      const rangeY = state.filters[scatterFields.y] || { absoluteMin: 0, absoluteMax: 100 };
+      const spanX = rangeX.absoluteMax - rangeX.absoluteMin || 1;
+      const spanY = rangeY.absoluteMax - rangeY.absoluteMin || 1;
+
+      const points = [];
+      state.view.forEach((row, idx) => {
+        const xVal = row._values[scatterFields.x];
+        const yVal = row._values[scatterFields.y];
+        if (xVal === null || yVal === null) return;
+        const x = padding + ((xVal - rangeX.absoluteMin) / spanX) * plotSize;
+        const y = size - padding - ((yVal - rangeY.absoluteMin) / spanY) * plotSize;
+        points.push({
+          x,
+          y,
+          rowId: row._idx,
+          label: `${row.Title} • ${row.Artist || row.Spotify_Artists || "Unknown"}`,
+          selected: state.selected.has(row._idx),
+          idx
+        });
+      });
+
+      state.scatter.points = points;
+      state.scatter.dirty = false;
+      return { ctx, size, padding };
+    }
+
+    function renderScatter() {
+      if (!dom.scatter) return;
+      let ctx, size, padding;
+      if (state.scatter.dirty) {
+        ({ ctx, size, padding } = computeScatterPoints());
+      } else {
+        const dpr = window.devicePixelRatio || 1;
+        size = dom.scatter.height / dpr || dom.scatter.clientWidth || 520;
+        padding = 42;
+        ctx = dom.scatter.getContext("2d");
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
-    }
-  }
-  
-  updateSelectedCount();
-  updateScatterPlot();
-  log(`Added ${addedCount} new neighbors to selection`, "ok");
-}
+      const points = state.scatter.points;
 
-function buildHistogram(field, binCount = 10) {
-  const values = csvRows
-    .map(r => getNumericValue(r[field]))
-    .filter(v => v !== null);
-  
-  if (values.length === 0) return { bins: [], min: 0, max: 0 };
+      ctx.clearRect(0, 0, size, size);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, size, size);
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const bins = Array(binCount).fill(0);
-  const range = max - min || 1;
-
-  values.forEach(v => {
-    const binIdx = Math.min(
-      Math.floor(((v - min) / range) * binCount),
-      binCount - 1
-    );
-    bins[binIdx]++;
-  });
-
-  return { bins, min, max };
-}
-
-function renderFilters() {
-  const container = document.getElementById("filtersContainer");
-  container.innerHTML = "";
-
-  const fields = ["BPM", "Energy", "Dance", "Valence"];
-  fields.forEach(field => {
-    const { bins, min, max } = buildHistogram(field, 20);
-    const state = filterState[field];
-    const maxBin = Math.max(...bins, 1);
-
-    const item = document.createElement("div");
-    item.className = "filter-item";
-    item.innerHTML = `
-      <div class="filter-label">${field}</div>
-      <div class="histogram">
-        ${bins.map(count => 
-          `<div class="histogram-bar" style="height: ${(count / maxBin) * 100}%;" title="${count}"></div>`
-        ).join("")}
-      </div>
-      <div class="range-slider-container">
-        <input type="range" class="range-slider filter-min-slider" min="${Math.floor(min)}" max="${Math.ceil(max)}" value="${state.min}" />
-        <input type="range" class="range-slider filter-max-slider" min="${Math.floor(min)}" max="${Math.ceil(max)}" value="${state.max}" />
-      </div>
-      <div class="range-values">
-        <span class="min-display">${state.min}</span>
-        <span class="max-display">${state.max}</span>
-      </div>
-      <div class="filter-stats">Range: ${Math.floor(min)} to ${Math.ceil(max)}</div>
-    `;
-
-    const minSlider = item.querySelector(".filter-min-slider");
-    const maxSlider = item.querySelector(".filter-max-slider");
-    const minDisplay = item.querySelector(".min-display");
-    const maxDisplay = item.querySelector(".max-display");
-
-    minSlider.addEventListener("input", () => {
-      const newMin = Math.min(Number(minSlider.value), state.max);
-      state.min = newMin;
-      minSlider.value = newMin;
-      minDisplay.textContent = newMin;
-      renderTable();
-    });
-
-    maxSlider.addEventListener("input", () => {
-      const newMax = Math.max(Number(maxSlider.value), state.min);
-      state.max = newMax;
-      maxSlider.value = newMax;
-      maxDisplay.textContent = newMax;
-      renderTable();
-    });
-
-    container.appendChild(item);
-  });
-}
-
-function toNumberMaybe(v) {
-  if (v === null || v === undefined) return null;
-  const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
-  return Number.isFinite(n) ? n : null;
-}
-function escapeHTML(s) {
-  return String(s)
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#39;");
-}
-function updateSelectedCount() {
-  const checked = document.querySelectorAll(".rowCheckbox:checked").length;
-  document.getElementById("selectedCount").textContent = `${checked} track${checked !== 1 ? "s" : ""} selected`;
-}
-function renderScatterPlot() {
-  const canvas = document.getElementById("scatterPlot");
-  const size = Math.min(800, canvas.offsetWidth);
-  canvas.width = size;
-  canvas.height = size;
-  
-  const ctx = canvas.getContext("2d");
-  const padding = 40;
-  const plotSize = size - 2 * padding;
-
-  // Clear canvas
-  ctx.fillStyle = "#fff";
-  ctx.fillRect(0, 0, size, size);
-
-  // Draw axes
-  ctx.strokeStyle = "#ddd";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(padding, padding);
-  ctx.lineTo(padding, size - padding);
-  ctx.lineTo(size - padding, size - padding);
-  ctx.stroke();
-
-  // Draw axis labels
-  ctx.fillStyle = "#666";
-  ctx.font = "12px system-ui";
-  ctx.textAlign = "center";
-  ctx.fillText("Energy", size / 2, size - 10);
-  ctx.textAlign = "right";
-  ctx.rotate(-Math.PI / 2);
-  ctx.fillText("Valence", -size / 2, 15);
-  ctx.rotate(Math.PI / 2);
-
-  // Draw grid lines and tick labels
-  ctx.strokeStyle = "#f0f0f0";
-  ctx.lineWidth = 1;
-  ctx.fillStyle = "#999";
-  ctx.font = "11px system-ui";
-  ctx.textAlign = "center";
-  for (let i = 0; i <= 100; i += 20) {
-    const x = padding + (i / 100) * plotSize;
-    ctx.beginPath();
-    ctx.moveTo(x, size - padding);
-    ctx.lineTo(x, padding);
-    ctx.stroke();
-    ctx.fillText(i, x, size - padding + 15);
-  }
-
-  ctx.textAlign = "right";
-  for (let i = 0; i <= 100; i += 20) {
-    const y = size - padding - (i / 100) * plotSize;
-    ctx.beginPath();
-    ctx.moveTo(padding, y);
-    ctx.lineTo(size - padding, y);
-    ctx.stroke();
-    ctx.fillText(i, padding - 10, y + 4);
-  }
-
-  // Plot points
-  pointMap = {};
-  let pointIndex = 0;
-  viewRows.forEach((row, idx) => {
-    const energy = getNumericValue(row.Energy);
-    const valence = getNumericValue(row.Valence);
-
-    if (energy !== null && valence !== null) {
-      const x = padding + (energy / 100) * plotSize;
-      const y = size - padding - (valence / 100) * plotSize;
-
-      const isSelected = document.querySelector(`.rowCheckbox[data-idx="${idx}"]`)?.checked || false;
-      const isHovered = hoveredPointIdx === pointIndex;
-      const pointRadius = isSelected || isHovered ? 6 : 4;
-
-      ctx.fillStyle = isSelected ? "#0084ff" : (isHovered ? "#ff6b35" : "#ccc");
+      ctx.strokeStyle = "#e5e9ef";
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(padding, padding);
+      ctx.lineTo(padding, size - padding);
+      ctx.lineTo(size - padding, size - padding);
+      ctx.stroke();
 
-      if (isSelected || isHovered) {
-        ctx.strokeStyle = isSelected ? "#0066cc" : "#ff4500";
-        ctx.lineWidth = 2;
+      ctx.strokeStyle = "#f1f3f6";
+      ctx.fillStyle = "#9ca3af";
+      ctx.font = "11px system-ui";
+      ctx.textAlign = "center";
+      const gridSpan = size - padding * 2;
+      for (let i = 0; i <= 100; i += 20) {
+        const x = padding + (i / 100) * gridSpan;
         ctx.beginPath();
-        ctx.arc(x, y, pointRadius + 2, 0, Math.PI * 2);
+        ctx.moveTo(x, size - padding);
+        ctx.lineTo(x, padding);
         ctx.stroke();
+        ctx.fillText(i, x, size - padding + 16);
       }
+      ctx.save();
+      ctx.translate(12, size / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.fillText("Valence", 0, 0);
+      ctx.restore();
+      ctx.fillText("Energy", size / 2, size - 12);
 
-      const csvRowIdx = csvRows.indexOf(row);
-      pointMap[pointIndex] = { idx, x, y, radius: pointRadius + 2, title: row.Title, artist: row.Artist, csvRowIdx };
-      pointIndex++;
+      points.forEach(point => {
+        ctx.beginPath();
+        const radius = point.rowId === state.scatter.hoverId ? 8 : 6;
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = point.selected ? "#1db954" : "rgba(16,18,26,0.65)";
+        ctx.globalAlpha = point.rowId === state.scatter.hoverId ? 1 : 0.85;
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
     }
-  });
-}
 
-function getPointAtCoords(canvas, mx, my) {
-  Object.entries(pointMap).forEach(([idx, point]) => {
-    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
-    if (dist <= point.radius + 4) {
-      return parseInt(idx);
+    function findPointAt(x, y) {
+      let best = null;
+      let minDist = 10;
+      for (const point of state.scatter.points) {
+        const dist = Math.hypot(point.x - x, point.y - y);
+        if (dist < minDist) {
+          minDist = dist;
+          best = point;
+        }
+      }
+      return best;
     }
-  });
-  return null;
-}
 
-function updateScatterPlot() {
-  renderScatterPlot();
-}
+    function handleScatterMove(event) {
+      const rect = dom.scatter.getBoundingClientRect();
+      const mx = event.clientX - rect.left;
+      const my = event.clientY - rect.top;
+      const point = findPointAt(mx, my);
+      const tooltip = dom.scatterTooltip;
 
-function renderTable() {
-  const q = filterInput.value.trim().toLowerCase();
-  if (q) {
-    viewRows = csvRows.filter(r => {
-      const hay = [r.Title, r.Artist, r.Release, r.Spotify_Artists].filter(Boolean).join(" ").toLowerCase();
-      return hay.includes(q);
-    });
-  } else {
-    viewRows = csvRows.slice();
-  }
-
-  // Apply numeric range filters
-  viewRows = viewRows.filter(r => {
-    for (const field of ["BPM", "Energy", "Dance", "Valence"]) {
-      const val = getNumericValue(r[field]);
-      if (val !== null) {
-        const state = filterState[field];
-        if (val < state.min || val > state.max) return false;
+      if (point) {
+        if (state.scatter.hoverId !== point.rowId) {
+          state.scatter.hoverId = point.rowId;
+          scheduleScatterRender();
+        }
+        tooltip.textContent = `${point.label} — double-click to add neighbours`;
+        tooltip.style.display = "block";
+        const width = tooltip.offsetWidth || 240;
+        const offsetX = Math.min(event.clientX + 14, window.innerWidth - width - 12);
+        const offsetY = Math.max(event.clientY - 24, 12);
+        tooltip.style.left = `${offsetX}px`;
+        tooltip.style.top = `${offsetY}px`;
+      } else {
+        if (state.scatter.hoverId !== null) {
+          state.scatter.hoverId = null;
+          scheduleScatterRender();
+        }
+        tooltip.style.display = "none";
       }
     }
-    return true;
-  });
 
-  const { key, dir } = sortState;
-  viewRows.sort((a,b) => {
-    const av = a[key], bv = b[key];
-    const an = toNumberMaybe(av), bn = toNumberMaybe(bv);
-    let cmp;
-    if (an !== null && bn !== null) cmp = an - bn;
-    else cmp = String(av ?? "").localeCompare(String(bv ?? ""), undefined, { numeric: true, sensitivity: "base" });
-    return dir === "asc" ? cmp : -cmp;
-  });
+    function handleScatterClick(event) {
+      const rect = dom.scatter.getBoundingClientRect();
+      const mx = event.clientX - rect.left;
+      const my = event.clientY - rect.top;
+      const point = findPointAt(mx, my);
+      if (!point) return;
+      toggleSelection(point.rowId);
+    }
 
-  const rowsHtml = viewRows.map((r, idx) => {
-    const spotifyUrl = r.Spotify_URL || (r.Spotify_Track_ID ? `https://open.spotify.com/track/${r.Spotify_Track_ID}` : "");
-    const csvRowIdx = csvRows.indexOf(r);
-    return `<tr data-uri="${escapeHTML(r.Spotify_URI || "")}" data-csv-idx="${csvRowIdx}">
-      <td><input type="checkbox" class="rowCheckbox" data-idx="${idx}" /></td>
-      <td><button class="knn-btn" title="Find similar tracks">🔍</button> ${escapeHTML(r.Title ?? "")}</td>
-      <td>${escapeHTML(r.Artist ?? r.Spotify_Artists ?? "")}</td>
-      <td>${escapeHTML(r.Release ?? r.Spotify_Release_Date ?? "")}</td>
-      <td class="right">${escapeHTML(r.BPM ?? "")}</td>
-      <td class="right">${escapeHTML(r.Energy ?? "")}</td>
-      <td class="right">${escapeHTML(r.Dance ?? "")}</td>
-      <td class="right">${escapeHTML(r.Valence ?? "")}</td>
-      <td>${spotifyUrl ? `<a class="link" href="${escapeHTML(spotifyUrl)}" target="_blank" rel="noopener">Open</a>` : ""}</td>
-    </tr>`;
-  }).join("");
-  csvBody.innerHTML = rowsHtml || `<tr><td colspan="9" class="muted">No rows.</td></tr>`;
+    function handleScatterDblClick(event) {
+      const rect = dom.scatter.getBoundingClientRect();
+      const mx = event.clientX - rect.left;
+      const my = event.clientY - rect.top;
+      const point = findPointAt(mx, my);
+      if (!point) return;
+      selectNeighbors(point.rowId);
+    }
 
-  document.querySelectorAll("thead th.th-sort").forEach(th => {
-    const k = th.dataset.key;
-    th.setAttribute("data-sort", k === key ? (dir === "asc" ? "▲" : "▼") : "");
-  });
+    async function loadCsv(path) {
+      return new Promise((resolve, reject) => {
+        if (!window.Papa) return reject(new Error("Papa Parse failed to load."));
+        Papa.parse(path, {
+          download: true,
+          header: true,
+          skipEmptyLines: true,
+          dynamicTyping: false,
+          complete: (res) => resolve(res.data),
+          error: (err) => reject(err)
+        });
+      });
+    }
 
-  document.querySelectorAll(".rowCheckbox").forEach(cb => {
-    cb.addEventListener("change", () => {
-      updateSelectedCount();
-      updateScatterPlot();
-    });
-  });
+    function normalizeHeaders(obj) {
+      const map = {};
+      Object.keys(obj).forEach(k => {
+        const nk = k.replace(/\s+/g, "_");
+        map[nk] = obj[k];
+      });
+      return map;
+    }
 
-  document.querySelectorAll(".knn-btn").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const csvRowIdx = parseInt(btn.closest("tr").dataset.csvIdx);
-      selectNeighbors(csvRowIdx);
-    });
-  });
+    function bootstrapFilters() {
+      numericFields.forEach(field => {
+        const values = state.rows.map(row => row._values[field]).filter(val => val !== null);
+        const absoluteMin = values.length ? Math.floor(Math.min(...values)) : 0;
+        const absoluteMax = values.length ? Math.ceil(Math.max(...values)) : 100;
+        state.filters[field] = {
+          absoluteMin,
+          absoluteMax,
+          min: absoluteMin,
+          max: absoluteMax
+        };
+      });
+      buildFilters();
+      attachFilterListeners();
+    }
 
-  document.querySelectorAll("tbody tr").forEach(tr => {
-    tr.addEventListener("click", (e) => {
-      if (e.target.tagName === "A" || e.target.tagName === "BUTTON") return;
-      if (e.target.type === "checkbox") return;
-      const checkbox = tr.querySelector(".rowCheckbox");
-      if (checkbox) {
-        checkbox.checked = !checkbox.checked;
+    async function createPlaylistAndAddTracks() {
+      try {
+        const playlistName = dom.playlistName.value.trim() || "PKCE Demo Playlist";
+        const selectedUris = Array.from(state.selected)
+          .map(id => state.rows[id]?.Spotify_URI)
+          .filter(uri => uri && uri.length > 0);
+        if (!selectedUris.length) {
+          log("No tracks selected.", "err");
+          return;
+        }
+        log("Fetching your profile (/me)…");
+        const me = await apiFetch("/me");
+        if (!me.ok) throw new Error(JSON.stringify(me.json));
+        const userId = me.json.id;
+        log(`Hello ${me.json.display_name || userId}!`, "ok");
+        log(`Creating playlist "${playlistName}"…`);
+        const newPl = await apiFetch(`/users/${encodeURIComponent(userId)}/playlists`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: playlistName,
+            description: "Created by Spotify CSV Browser",
+            public: false
+          })
+        });
+        if (!newPl.ok) throw new Error(JSON.stringify(newPl.json));
+        const playlistId = newPl.json.id;
+        log(`Created: ${newPl.json.name}`, "ok");
+        log(`Adding ${selectedUris.length} track(s) to playlist…`);
+        const addResp = await apiFetch(`/playlists/${playlistId}/tracks`, {
+          method: "POST",
+          body: JSON.stringify({ uris: selectedUris })
+        });
+        if (!addResp.ok) throw new Error(JSON.stringify(addResp.json));
+        log(`Added ${selectedUris.length} track(s) successfully!`, "ok");
+      } catch (err) {
+        log(`Error: ${err.message}`, "err");
+        console.error(err);
+      }
+    }
+
+    function resetFilters() {
+      numericFields.forEach(field => {
+        const range = state.filters[field];
+        if (!range) return;
+        range.min = range.absoluteMin;
+        range.max = range.absoluteMax;
+        updateFilterLabels(field);
+      });
+      scheduleViewRefresh();
+    }
+
+    function setupEvents() {
+      dom.loginBtn.addEventListener("click", beginLogin);
+      dom.createPlaylistBtn.addEventListener("click", createPlaylistAndAddTracks);
+
+      dom.loadCsvBtn.addEventListener("click", async () => {
+        const path = dom.csvPath.value.trim() || "songs.csv";
+        try {
+          log(`Loading ${path}…`);
+          const data = await loadCsv(path);
+          state.rows = data.map((row, idx) => {
+            const normalized = normalizeHeaders(row);
+            normalized._idx = idx;
+            normalized._values = {};
+            numericFields.forEach(field => {
+              normalized._values[field] = getNumericValue(normalized[field]);
+            });
+            normalized._haystack = [normalized.Title, normalized.Artist, normalized.Release, normalized.Spotify_Artists]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+            return normalized;
+          });
+          state.selected.clear();
+          state.search = dom.filterInput.value.trim().toLowerCase();
+          state.scatter.dirty = true;
+          bootstrapFilters();
+          refreshView();
+          log(`Loaded ${state.rows.length} rows.`, "ok");
+        } catch (err) {
+          console.error(err);
+          log(`Failed to load CSV: ${err.message}`, "err");
+        }
+      });
+
+      dom.filterInput.addEventListener("input", debounce(event => {
+        state.search = event.target.value.trim().toLowerCase();
+        scheduleViewRefresh();
+      }, 180));
+
+      dom.selectAll.addEventListener("change", event => {
+        if (event.target.checked) {
+          state.view.forEach(row => state.selected.add(row._idx));
+        } else {
+          state.view.forEach(row => state.selected.delete(row._idx));
+        }
+        updateSelectionCheckboxes();
         updateSelectedCount();
-        updateScatterPlot();
+      });
+
+      dom.deselectAllBtn.addEventListener("click", () => {
+        state.selected.clear();
+        updateSelectionCheckboxes();
+        updateSelectedCount();
+      });
+
+      dom.knnK.addEventListener("change", event => {
+        const value = Number(event.target.value);
+        if (Number.isFinite(value) && value >= 1 && value <= 50) {
+          state.knn.k = value;
+          log(`KNN k set to ${value}`, "ok");
+        } else {
+          event.target.value = state.knn.k;
+        }
+      });
+
+      dom.knnDimContainer.addEventListener("change", event => {
+        const checkbox = event.target;
+        if (checkbox.tagName !== "INPUT") return;
+        const field = checkbox.dataset.dim;
+        state.knn.dimensions[field] = checkbox.checked;
+        if (!Object.values(state.knn.dimensions).some(Boolean)) {
+          checkbox.checked = true;
+          state.knn.dimensions[field] = true;
+          log("At least one dimension must remain enabled.", "err");
+          return;
+        }
+        log(`${field} ${checkbox.checked ? "enabled" : "disabled"}.`, "ok");
+        scheduleScatterRender(true);
+      });
+
+      dom.tableHead.addEventListener("click", event => {
+        const th = event.target.closest("th[data-key]");
+        if (!th) return;
+        const key = th.dataset.key;
+        if (!key) return;
+        if (state.sort.key === key) {
+          state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+        } else {
+          state.sort.key = key;
+          state.sort.dir = "asc";
+        }
+        refreshView();
+      });
+
+      dom.csvBody.addEventListener("change", event => {
+        if (!event.target.classList.contains("rowCheckbox")) return;
+        const rowId = Number(event.target.dataset.rowId);
+        if (event.target.checked) state.selected.add(rowId);
+        else state.selected.delete(rowId);
+        updateSelectAllState();
+        updateSelectedCount();
+      });
+
+      dom.csvBody.addEventListener("click", event => {
+        const button = event.target.closest(".knn-btn");
+        if (button) {
+          const row = button.closest("tr[data-row-id]");
+          if (row) selectNeighbors(Number(row.dataset.rowId));
+          return;
+        }
+        if (event.target.closest("a")) return;
+        if (event.target.classList.contains("rowCheckbox")) return;
+        const row = event.target.closest("tr[data-row-id]");
+        if (!row) return;
+        toggleSelection(Number(row.dataset.rowId));
+      });
+
+      dom.csvBody.addEventListener("dblclick", event => {
+        if (event.target.closest("a")) return;
+        const row = event.target.closest("tr[data-row-id]");
+        if (!row) return;
+        selectNeighbors(Number(row.dataset.rowId));
+      });
+
+      if (dom.scatter) {
+        dom.scatter.addEventListener("click", handleScatterClick);
+        dom.scatter.addEventListener("dblclick", handleScatterDblClick);
+        dom.scatter.addEventListener("mousemove", handleScatterMove);
+        dom.scatter.addEventListener("mouseleave", () => {
+          state.scatter.hoverId = null;
+          dom.scatterTooltip.style.display = "none";
+          scheduleScatterRender();
+        });
       }
-    });
-    
-    tr.addEventListener("dblclick", (e) => {
-      if (e.target.tagName === "A") return;
-      const csvRowIdx = parseInt(tr.dataset.csvIdx);
-      selectNeighbors(csvRowIdx);
-    });
-  });
 
-  updateScatterPlot();
-}
-
-async function loadCsv(path) {
-  return new Promise((resolve, reject) => {
-    if (!window.Papa) return reject(new Error("Papa Parse failed to load."));
-    Papa.parse(path, {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      dynamicTyping: false,
-      complete: (res) => resolve(res.data),
-      error: (err) => reject(err),
-    });
-  });
-}
-
-function normalizeHeaders(obj) {
-  const map = {};
-  Object.keys(obj).forEach(k => {
-    const nk = k.replace(/\s+/g, "_");
-    map[nk] = obj[k];
-  });
-  return map;
-}
-
-async function createPlaylistAndAddTracks() {
-  try {
-    const playlistName = document.getElementById("playlistName").value.trim() || "PKCE Demo Playlist";
-    const selectedCheckboxes = document.querySelectorAll(".rowCheckbox:checked");
-    const selectedUris = Array.from(selectedCheckboxes).map(cb => {
-      const tr = cb.closest("tr");
-      return tr.dataset.uri;
-    }).filter(uri => uri && uri.length > 0);
-
-    if (selectedUris.length === 0) {
-      log("No tracks selected.", "err");
-      return;
+      dom.resetFiltersBtn.addEventListener("click", resetFilters);
+      window.addEventListener("resize", () => scheduleScatterRender(true));
     }
 
-    log("Fetching your profile (/me)…");
-    const me = await apiFetch("/me");
-    if (!me.ok) throw new Error(JSON.stringify(me.json));
-    const userId = me.json.id;
-    log(`Hello ${me.json.display_name || userId}!`, "ok");
+    async function initAuth() {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const error = params.get("error");
+      if (error) {
+        log(`Auth error: ${error}`, "err");
+      }
 
-    log(`Creating playlist "${playlistName}"…`);
-    const newPl = await apiFetch(`/users/${encodeURIComponent(userId)}/playlists`, {
-      method: "POST",
-      body: JSON.stringify({
-        name: playlistName,
-        description: "Created by Spotify CSV Browser",
-        public: false
-      })
-    });
-    if (!newPl.ok) throw new Error(JSON.stringify(newPl.json));
-    const playlistId = newPl.json.id;
-    log(`Created: ${newPl.json.name}`, "ok");
+      if (code) {
+        try {
+          log("Exchanging authorization code for access token…");
+          await exchangeCodeForToken(code);
+          window.history.replaceState({}, document.title, window.location.pathname);
+          setAuthStatus("✓ Logged in");
+          dom.createPlaylistBtn.disabled = state.selected.size === 0;
+          log("Logged in successfully!", "ok");
+        } catch (err) {
+          log(`Token exchange failed: ${err.message}`, "err");
+        }
+      } else if (localStorage.getItem("access_token")) {
+        setAuthStatus("✓ Logged in");
+        dom.createPlaylistBtn.disabled = state.selected.size === 0;
+        log("Token present.", "ok");
+      } else {
+        setAuthStatus("Not logged in");
+        log("CSV features work without login. Log in to create playlists.", "");
+      }
+    }
 
-    log(`Adding ${selectedUris.length} track(s) to playlist…`);
-    const addResp = await apiFetch(`/playlists/${playlistId}/tracks`, {
-      method: "POST",
-      body: JSON.stringify({ uris: selectedUris })
-    });
-    if (!addResp.ok) throw new Error(JSON.stringify(addResp.json));
-    log(`Added ${selectedUris.length} track(s) successfully!`, "ok");
-  } catch (e) {
-    log(`Error: ${e.message}`, "err");
-    console.error(e);
-  }
-}
-
-document.getElementById("loginBtn").addEventListener("click", beginLogin);
-document.getElementById("createPlaylistBtn").addEventListener("click", createPlaylistAndAddTracks);
-
-document.getElementById("loadCsvBtn").addEventListener("click", async () => {
-  const path = document.getElementById("csvPath").value.trim() || "songs.csv";
-  try {
-    const data = await loadCsv(path);
-    csvRows = data.map(normalizeHeaders);
-    renderFilters();
-    renderTable();
-    // Do NOT auto-select all checkboxes
+    buildKnnControls();
+    attachFilterListeners();
+    setupEvents();
+    initAuth();
     updateSelectedCount();
-    updateScatterPlot();
-    log(`Loaded ${csvRows.length} rows.`, "ok");
-  } catch (e) {
-    console.error(e);
-    log(`Failed to load CSV: ${e.message}`, "err");
-  }
-});
-
-filterInput.addEventListener("input", renderTable);
-
-document.querySelectorAll("thead th.th-sort").forEach(th => {
-  th.addEventListener("click", () => {
-    const key = th.dataset.key;
-    if (sortState.key === key) {
-      sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
-    } else {
-      sortState.key = key;
-      sortState.dir = "asc";
-    }
-    renderTable();
-  });
-});
-
-document.getElementById("selectAll").addEventListener("change", (e) => {
-  document.querySelectorAll(".rowCheckbox").forEach(cb => cb.checked = e.target.checked);
-  updateSelectedCount();
-  updateScatterPlot();
-});
-
-document.getElementById("deselectAllBtn").addEventListener("click", () => {
-  document.querySelectorAll(".rowCheckbox").forEach(cb => cb.checked = false);
-  document.getElementById("selectAll").checked = false;
-  updateSelectedCount();
-  updateScatterPlot();
-});
-
-document.getElementById("scatterPlot").addEventListener("click", (e) => {
-  const canvas = document.getElementById("scatterPlot");
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-
-  let closestIdx = null;
-  let closestDist = Infinity;
-  
-  Object.entries(pointMap).forEach(([_, point]) => {
-    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
-    if (dist < closestDist) {
-      closestDist = dist;
-      closestIdx = point.idx;
-    }
-  });
-
-  if (closestDist <= 8) {
-    const checkbox = document.querySelector(`.rowCheckbox[data-idx="${closestIdx}"]`);
-    if (checkbox) {
-      checkbox.checked = !checkbox.checked;
-      updateSelectedCount();
-      updateScatterPlot();
-    }
-  }
-});
-
-document.getElementById("scatterPlot").addEventListener("dblclick", (e) => {
-  const canvas = document.getElementById("scatterPlot");
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-
-  let closestPoint = null;
-  let closestDist = Infinity;
-  
-  Object.entries(pointMap).forEach(([_, point]) => {
-    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
-    if (dist < closestDist) {
-      closestDist = dist;
-      closestPoint = point;
-    }
-  });
-
-  if (closestDist <= 10 && closestPoint) {
-    selectNeighbors(closestPoint.csvRowIdx);
-  }
-});
-
-document.getElementById("scatterPlot").addEventListener("mousemove", (e) => {
-  const canvas = document.getElementById("scatterPlot");
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-
-  let foundIdx = null;
-  let foundPoint = null;
-  let closestDist = Infinity;
-
-  Object.entries(pointMap).forEach(([idx, point]) => {
-    const dist = Math.sqrt(Math.pow(mx - point.x, 2) + Math.pow(my - point.y, 2));
-    if (dist < closestDist) {
-      closestDist = dist;
-      if (dist <= 10) {
-        foundIdx = parseInt(idx);
-        foundPoint = point;
-      }
-    }
-  });
-
-  if (foundIdx !== hoveredPointIdx) {
-    hoveredPointIdx = foundIdx;
-    renderScatterPlot();
-  }
-
-  const tooltip = document.getElementById("scatterTooltip");
-  if (foundPoint && closestDist <= 10) {
-    tooltip.textContent = `${foundPoint.title} • ${foundPoint.artist} (double-click to find neighbors)`;
-    tooltip.style.display = "block";
-    
-    let tooltipX = e.clientX + 12;
-    let tooltipY = e.clientY - 20;
-    tooltipX = Math.max(0, Math.min(tooltipX, window.innerWidth - 250));
-    tooltipY = Math.max(0, tooltipY);
-    
-    tooltip.style.left = tooltipX + "px";
-    tooltip.style.top = tooltipY + "px";
-  } else {
-    tooltip.style.display = "none";
-  }
-});
-
-document.getElementById("scatterPlot").addEventListener("mouseleave", () => {
-  hoveredPointIdx = null;
-  document.getElementById("scatterTooltip").style.display = "none";
-  renderScatterPlot();
-});
-
-// Settings event listeners
-document.getElementById("knnK").addEventListener("change", (e) => {
-  const val = parseInt(e.target.value);
-  if (val >= 1 && val <= 50) {
-    knnSettings.k = val;
-    log(`KNN k set to ${val}`, "ok");
-  }
-});
-
-["BPM", "Energy", "Dance", "Valence"].forEach(dim => {
-  const checkbox = document.getElementById(`knnDim-${dim}`);
-  // Ensure checkbox reflects current knnSettings state
-  checkbox.checked = knnSettings.dimensions[dim];
-  
-  checkbox.addEventListener("change", (e) => {
-    knnSettings.dimensions[dim] = e.target.checked;
-    const active = Object.values(knnSettings.dimensions).filter(Boolean).length;
-    if (active === 0) {
-      log("Warning: At least one dimension must be enabled.", "err");
-      e.target.checked = true;
-      checkbox.checked = true;
-      knnSettings.dimensions[dim] = true;
-    } else {
-      log(`${dim} ${e.target.checked ? "enabled" : "disabled"}`, "ok");
-    }
-  });
-});
-
-(async function init() {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get("code");
-  const error = params.get("error");
-  
-  if (error) { 
-    log(`Auth error: ${error}`, "err"); 
-  }
-  
-  if (code) {
-    try {
-      log("Exchanging authorization code for access token…");
-      await exchangeCodeForToken(code);
-      window.history.replaceState({}, document.title, window.location.pathname);
-      setAuthStatus("✓ Logged in");
-      document.getElementById("createPlaylistBtn").disabled = false;
-      log("Logged in successfully!", "ok");
-    } catch (e) {
-      log(`Token exchange failed: ${e.message}`, "err");
-    }
-  } else if (localStorage.getItem("access_token")) {
-    setAuthStatus("✓ Logged in");
-    document.getElementById("createPlaylistBtn").disabled = false;
-    log("Token present.", "ok");
-  } else {
-    setAuthStatus("Not logged in");
-    log("CSV features work without login. Log in to create playlists.", "");
-  }
-})();
-</script>
+    scheduleScatterRender(true);
+  </script>
 </body>
 </html>
