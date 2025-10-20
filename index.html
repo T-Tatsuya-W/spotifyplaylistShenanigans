@@ -142,7 +142,19 @@
       border-bottom: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 10px;
+    }
+
+    .scatter-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .scatter-actions .status {
+      font-size: 12px;
+      color: var(--muted);
     }
 
     canvas#scatterPlot {
@@ -369,7 +381,11 @@
           <h2>Energy vs. Valence</h2>
           <button id="resetFiltersBtn" type="button" style="background: transparent; color: #10121a; border: 1px solid var(--border);">Reset filters</button>
         </div>
-        <span class="scatter-label">Click points to toggle selection • Double-click a point to fetch KNN neighbours</span>
+        <div class="scatter-actions">
+          <button id="scatterKnnBtn" type="button" disabled>Find neighbours</button>
+          <span id="scatterSelectionLabel" class="status">Tap a point to enable neighbour search.</span>
+        </div>
+        <span class="scatter-label">Tap points to toggle selection • Double-tap (or use the button) to fetch KNN neighbours</span>
       </div>
       <canvas id="scatterPlot"></canvas>
       <div id="scatterTooltip" class="scatter-tooltip"></div>
@@ -466,7 +482,9 @@
       knnK: document.getElementById("knnK"),
       knnDimContainer: document.getElementById("knnDimContainer"),
       scatter: document.getElementById("scatterPlot"),
-      scatterTooltip: document.getElementById("scatterTooltip")
+      scatterTooltip: document.getElementById("scatterTooltip"),
+      scatterKnnBtn: document.getElementById("scatterKnnBtn"),
+      scatterSelectionLabel: document.getElementById("scatterSelectionLabel")
     };
 
     const state = {
@@ -488,9 +506,38 @@
       scatter: {
         points: [],
         dirty: true,
-        hoverId: null
+        hoverId: null,
+        lastActivatedId: null,
+        lastTapId: null,
+        lastTapTime: 0,
+        skipNextDblClick: false
       }
     };
+
+    function updateScatterKnnUi() {
+      if (!dom.scatterKnnBtn || !dom.scatterSelectionLabel) return;
+      const rowId = state.scatter.lastActivatedId;
+      const isVisible = rowId !== null && state.view.some(row => row._idx === rowId);
+      if (!isVisible) {
+        dom.scatterKnnBtn.disabled = true;
+        dom.scatterSelectionLabel.textContent = "Tap a point to enable neighbour search.";
+        return;
+      }
+      const row = state.rows[rowId];
+      if (!row) {
+        dom.scatterKnnBtn.disabled = true;
+        dom.scatterSelectionLabel.textContent = "Tap a point to enable neighbour search.";
+        return;
+      }
+      dom.scatterKnnBtn.disabled = false;
+      dom.scatterSelectionLabel.textContent = `${row.Title || "Unknown track"} — ready for neighbours.`;
+    }
+
+    function setScatterFocus(rowId) {
+      state.scatter.lastActivatedId = rowId;
+      updateScatterKnnUi();
+      scheduleScatterRender();
+    }
 
     function log(msg, cls = "") {
       dom.log.style.display = "grid";
@@ -626,6 +673,8 @@
       if (!state.rows.length) {
         dom.csvBody.innerHTML = "";
         state.view = [];
+        state.scatter.lastActivatedId = null;
+        updateScatterKnnUi();
         scheduleScatterRender(true);
         updateSelectedCount();
         return;
@@ -663,8 +712,12 @@
       });
 
       state.view = filtered;
+      if (state.scatter.lastActivatedId !== null && !filtered.some(row => row._idx === state.scatter.lastActivatedId)) {
+        state.scatter.lastActivatedId = null;
+      }
       renderTable();
       scheduleScatterRender(true);
+      updateScatterKnnUi();
       updateSelectedCount();
     }
 
@@ -949,11 +1002,18 @@
 
       points.forEach(point => {
         ctx.beginPath();
-        const radius = point.rowId === state.scatter.hoverId ? 8 : 6;
+        const isHover = point.rowId === state.scatter.hoverId;
+        const isFocused = point.rowId === state.scatter.lastActivatedId;
+        const radius = isFocused ? 9 : isHover ? 8 : 6;
         ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = point.selected ? "#1db954" : "rgba(16,18,26,0.65)";
-        ctx.globalAlpha = point.rowId === state.scatter.hoverId ? 1 : 0.85;
+        ctx.globalAlpha = isHover || isFocused ? 1 : 0.85;
         ctx.fill();
+        if (isFocused) {
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = point.selected ? "#0d7a3a" : "#1db954";
+          ctx.stroke();
+        }
       });
       ctx.globalAlpha = 1;
     }
@@ -983,7 +1043,7 @@
           state.scatter.hoverId = point.rowId;
           scheduleScatterRender();
         }
-        tooltip.textContent = `${point.label} — double-click to add neighbours`;
+        tooltip.textContent = `${point.label} — double-tap or press the button to add neighbours`;
         tooltip.style.display = "block";
         const width = tooltip.offsetWidth || 240;
         const offsetX = Math.min(event.clientX + 14, window.innerWidth - width - 12);
@@ -999,21 +1059,38 @@
       }
     }
 
+    const DOUBLE_TAP_MS = 350;
+
     function handleScatterClick(event) {
       const rect = dom.scatter.getBoundingClientRect();
       const mx = event.clientX - rect.left;
       const my = event.clientY - rect.top;
       const point = findPointAt(mx, my);
       if (!point) return;
+      const now = Date.now();
+      const isDoubleTap = state.scatter.lastTapId === point.rowId && (now - state.scatter.lastTapTime) <= DOUBLE_TAP_MS;
+      state.scatter.lastTapId = point.rowId;
+      state.scatter.lastTapTime = now;
+      setScatterFocus(point.rowId);
+      if (isDoubleTap) {
+        state.scatter.skipNextDblClick = true;
+        selectNeighbors(point.rowId);
+        return;
+      }
       toggleSelection(point.rowId);
     }
 
     function handleScatterDblClick(event) {
+      if (state.scatter.skipNextDblClick) {
+        state.scatter.skipNextDblClick = false;
+        return;
+      }
       const rect = dom.scatter.getBoundingClientRect();
       const mx = event.clientX - rect.left;
       const my = event.clientY - rect.top;
       const point = findPointAt(mx, my);
       if (!point) return;
+      setScatterFocus(point.rowId);
       selectNeighbors(point.rowId);
     }
 
@@ -1242,8 +1319,17 @@
         });
       }
 
+      if (dom.scatterKnnBtn) {
+        dom.scatterKnnBtn.addEventListener("click", () => {
+          const rowId = state.scatter.lastActivatedId;
+          if (rowId === null) return;
+          selectNeighbors(rowId);
+        });
+      }
+
       dom.resetFiltersBtn.addEventListener("click", resetFilters);
       window.addEventListener("resize", () => scheduleScatterRender(true));
+      updateScatterKnnUi();
     }
 
     async function initAuth() {
