@@ -2,7 +2,7 @@ const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";
 const SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
-const numericFields = ["BPM", "Energy", "Dance", "Valence"];
+const numericFields = ["BPM", "Energy", "Dance", "Valence", "Acoustic", "Popularity"];
 const scatterFields = { x: "Valence", y: "Energy" };
 
 const dom = {
@@ -41,7 +41,9 @@ const state = {
       BPM: true,
       Energy: true,
       Dance: true,
-      Valence: true
+      Valence: true,
+      Acoustic: false,
+      Popularity: false
     }
   },
   selected: new Set(),
@@ -266,7 +268,7 @@ function refreshView() {
 function renderTable() {
   const rows = state.view;
   if (!rows.length) {
-    dom.csvBody.innerHTML = `<tr><td colspan="9" class="muted">No rows match the current filters.</td></tr>`;
+    dom.csvBody.innerHTML = `<tr><td colspan="11" class="muted">No rows match the current filters.</td></tr>`;
     updateSortIndicators();
     updateSelectAllState();
     return;
@@ -284,6 +286,8 @@ function renderTable() {
       <td class="right">${escapeHTML(row.Energy)}</td>
       <td class="right">${escapeHTML(row.Dance)}</td>
       <td class="right">${escapeHTML(row.Valence)}</td>
+      <td class="right">${escapeHTML(row.Acoustic)}</td>
+      <td class="right">${escapeHTML(row.Popularity)}</td>
       <td>${spotifyUrl ? `<a class="link" href="${escapeHTML(spotifyUrl)}" target="_blank" rel="noopener">Open</a>` : ""}</td>
     </tr>`;
   }).join("");
