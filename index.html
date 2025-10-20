@@ -444,20 +444,6 @@
       </div>
     </header>
 
-    <details class="fold" id="csvBrowserFold" open>
-      <summary>
-        CSV Browser
-        <span class="muted" style="font-size: 12px;">Tip: double-click the scatter to grab similar songs.</span>
-      </summary>
-      <div class="fold-body">
-        <div class="control-row">
-          <label for="csvPath">CSV file</label>
-          <input id="csvPath" type="text" class="mono" value="songs.csv" />
-          <button id="loadCsvBtn">Load CSV</button>
-        </div>
-      </div>
-    </details>
-
     <section class="card scatter-card">
       <div class="scatter-header">
         <div class="section-title">
@@ -483,7 +469,6 @@
         <span class="muted" style="font-size: 12px;">Refine the table or tweak the neighbour search.</span>
       </summary>
       <div class="fold-body">
-        <div class="filters-grid" id="filtersContainer"></div>
         <div class="knn-grid">
           <div class="control-row" style="align-items: flex-end;">
             <label for="knnK">KNN neighbours (k)</label>
@@ -493,6 +478,21 @@
             <div class="muted" style="font-size: 12px; margin-bottom: 8px;">Dimensions</div>
             <div class="knn-dims" id="knnDimContainer"></div>
           </div>
+        </div>
+        <div class="filters-grid" id="filtersContainer"></div>
+      </div>
+    </details>
+
+    <details class="fold" id="csvBrowserFold" open>
+      <summary>
+        CSV Browser
+        <span class="muted" style="font-size: 12px;">Tip: double-click the scatter to grab similar songs.</span>
+      </summary>
+      <div class="fold-body">
+        <div class="control-row">
+          <label for="csvPath">CSV file</label>
+          <input id="csvPath" type="text" class="mono" value="songs.csv" />
+          <button id="loadCsvBtn">Load CSV</button>
         </div>
       </div>
     </details>
