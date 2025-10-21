@@ -26,6 +26,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+import webbrowser  # added import
 
 # Load environment variables
 load_dotenv()
@@ -383,7 +384,9 @@ class PlaylistDatabaseBuilder:
         """Clean up clutter files after processing"""
         files_to_cleanup = [
             "Sort Your Music_files",
-            "html_files/Sort Your Music_files"
+            "html_files/Sort Your Music_files",
+            "Sort Your Music.htm",     # remove exported HTML file
+            "Sort Your Music.html"     # also handle .html variant
         ]
         
         for file_path in files_to_cleanup:
@@ -442,8 +445,27 @@ def main():
     print("=" * 50)
     print("📄 Looking for 'Sort Your Music.html'...")
     
-    # Initialize processor
-    processor = PlaylistDatabaseBuilder()
+    # Open Sort Your Music page in the default browser and wait for the user
+    url = "http://sortyourmusic.playlistmachinery.com/"
+    print(f"\n🌐 Opening Sort Your Music in your browser: {url}")
+    try:
+        webbrowser.open(url, new=2)
+    except Exception:
+        # If opening the browser fails, just continue — user can open manually
+        print("   ⚠️  Could not automatically open the browser. Please open the URL manually.")
+    
+    input("When you're ready (after saving/exporting the playlist as 'Sort Your Music.htm' in this folder), press Enter to continue...")
+    
+    # Prompt user for master CSV filename (default if Enter)
+    csv_input = input("Enter master CSV filename (press Enter for 'spotify_master_database.csv'): ").strip()
+    if not csv_input:
+        master_csv = "spotify_master_database.csv"
+    else:
+        master_csv = csv_input if csv_input.lower().endswith('.csv') else f"{csv_input}.csv"
+    print(f"Using master CSV: {master_csv}")
+    
+    # Initialize processor with chosen master CSV
+    processor = PlaylistDatabaseBuilder(master_csv_path=master_csv)
     
     # Process the playlist (no parameters needed)
     processor.process_playlist()
