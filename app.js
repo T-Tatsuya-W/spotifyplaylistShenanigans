@@ -403,6 +403,7 @@ function resetClusterState() {
   state.clusters.skipped = 0;
   state.scatter.dirty = true;
   updateClusterUi();
+  scheduleScatterRender(true);
 }
 
 function runKMeansClustering() {
@@ -413,12 +414,19 @@ function runKMeansClustering() {
   if (dom.runClustersBtn) dom.runClustersBtn.disabled = true;
 
   try {
+    const activeDims = numericFields.filter(field => state.knn.dimensions[field]);
+    if (!activeDims.length) {
+      log("Enable at least one dimension before running clustering.", "err");
+      resetClusterState();
+      return;
+    }
+
     const completeRows = [];
     let skipped = 0;
     state.rows.forEach(row => {
       const vector = [];
       let hasNull = false;
-      for (const field of numericFields) {
+      for (const field of activeDims) {
         const val = row._values[field];
         if (val === null) {
           hasNull = true;
@@ -436,11 +444,11 @@ function runKMeansClustering() {
 
     if (!completeRows.length) {
       resetClusterState();
-      log("No tracks have complete numeric data for clustering.", "err");
+      log("No tracks have complete data for the selected dimensions.", "err");
       return;
     }
 
-    const dims = numericFields.length;
+    const dims = activeDims.length;
     const means = new Array(dims).fill(0);
     completeRows.forEach(item => {
       for (let d = 0; d < dims; d++) means[d] += item.vector[d];
@@ -541,8 +549,10 @@ function runKMeansClustering() {
     updateClusterUi();
     scheduleScatterRender(true);
 
+    const dimensionSummary = activeDims.join(", ");
     const summary = `K-means assigned ${actualK} cluster${actualK === 1 ? "" : "s"} to ${completeRows.length} track${completeRows.length === 1 ? "" : "s"}` +
-      (skipped ? ` (${skipped} skipped)` : "") + ".";
+      (skipped ? ` (${skipped} skipped)` : "") +
+      ` using ${dims} dimension${dims === 1 ? "" : "s"} (${dimensionSummary}).`;
     log(summary, "ok");
   } catch (err) {
     console.error(err);
@@ -1126,6 +1136,10 @@ function setupEvents() {
     button.classList.toggle("active", nextState);
     button.setAttribute("aria-pressed", nextState ? "true" : "false");
     log(`${field} ${nextState ? "enabled" : "disabled"}.`, "ok");
+    if (state.clusters.ready) {
+      resetClusterState();
+      log("Cleared existing clusters after dimension change. Re-run K-means to update.", "ok");
+    }
     scheduleScatterRender(true);
   });
 
