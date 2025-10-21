@@ -878,7 +878,14 @@ function computeScatterPoints() {
   const canvas = dom.scatter;
   const dpr = window.devicePixelRatio || 1;
   const parentWidth = canvas.parentElement?.clientWidth || canvas.clientWidth || 520;
-  const size = Math.min(parentWidth || 520, 720);
+  let size = Math.min(parentWidth || 520, 720);
+  const viewportCapRaw = Math.min((window.innerHeight || 0) * 0.7, 580);
+  if (Number.isFinite(viewportCapRaw) && viewportCapRaw > 0) {
+    size = Math.min(size, viewportCapRaw);
+  }
+  if (!Number.isFinite(size) || size <= 0) {
+    size = 320;
+  }
   canvas.width = size * dpr;
   canvas.height = size * dpr;
   canvas.style.width = `${size}px`;

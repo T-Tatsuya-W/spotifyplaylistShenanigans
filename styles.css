@@ -218,10 +218,11 @@ button:not(:disabled):hover {
 }
 
 canvas#scatterPlot {
-  width: 100%;
+  width: min(100%, 720px);
   height: auto;
   display: block;
   max-height: min(70vh, 580px);
+  max-width: min(70vh, 580px);
   touch-action: none;
 }
 
