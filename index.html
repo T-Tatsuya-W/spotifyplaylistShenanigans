@@ -57,10 +57,10 @@
       <div id="scatterTooltip" class="scatter-tooltip"></div>
     </section>
 
-    <details class="fold" id="filtersFold" open>
+    <details class="fold" id="dimensionsFold" open>
       <summary>
-        Filters &amp; Settings
-        <span class="muted small-text">Refine the table or tweak the neighbour search.</span>
+        Dimensions &amp; Settings
+        <span class="muted small-text">Adjust axes and configure the neighbour search.</span>
       </summary>
       <div class="fold-body">
         <div class="knn-grid">
@@ -83,6 +83,15 @@
             <select id="scatterYAxis"></select>
           </div>
         </div>
+      </div>
+    </details>
+
+    <details class="fold" id="filtersFold" open>
+      <summary>
+        Filters
+        <span class="muted small-text">Limit the tracks used for charts, KNN, and clustering.</span>
+      </summary>
+      <div class="fold-body">
         <div class="filters-grid" id="filtersContainer"></div>
       </div>
     </details>
