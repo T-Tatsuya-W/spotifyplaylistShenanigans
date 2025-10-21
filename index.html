@@ -34,7 +34,7 @@
     <section class="card scatter-card">
       <div class="scatter-header">
         <div class="section-title">
-          <h2>Energy vs. Valence</h2>
+          <h2 id="scatterTitle">Energy vs. Valence</h2>
           <div class="action-group">
             <button id="resetFiltersBtn" type="button" class="ghost-button">Reset filters</button>
             <button id="deselectAllBtn" type="button" class="ghost-button">Deselect All</button>
@@ -71,6 +71,16 @@
           <div>
             <div class="muted small-text mb-8">Dimensions</div>
             <div class="knn-dims" id="knnDimContainer"></div>
+          </div>
+        </div>
+        <div class="scatter-axis-grid">
+          <div class="control-row align-end">
+            <label for="scatterXAxis">X axis</label>
+            <select id="scatterXAxis"></select>
+          </div>
+          <div class="control-row align-end">
+            <label for="scatterYAxis">Y axis</label>
+            <select id="scatterYAxis"></select>
           </div>
         </div>
         <div class="filters-grid" id="filtersContainer"></div>
