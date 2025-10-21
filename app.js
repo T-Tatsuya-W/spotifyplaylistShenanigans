@@ -25,6 +25,9 @@ const dom = {
   filtersContainer: document.getElementById("filtersContainer"),
   knnK: document.getElementById("knnK"),
   knnDimContainer: document.getElementById("knnDimContainer"),
+  scatterTitle: document.getElementById("scatterTitle"),
+  scatterXAxis: document.getElementById("scatterXAxis"),
+  scatterYAxis: document.getElementById("scatterYAxis"),
   scatter: document.getElementById("scatterPlot"),
   scatterTooltip: document.getElementById("scatterTooltip"),
   scatterKnnBtn: document.getElementById("scatterKnnBtn"),
@@ -60,7 +63,11 @@ const state = {
     lastActivatedId: null,
     lastTapId: null,
     lastTapTime: 0,
-    skipNextDblClick: false
+    skipNextDblClick: false,
+    axis: {
+      x: { min: 0, max: 100, span: 100, ticks: [0, 25, 50, 75, 100], step: 25, label: scatterFields.x },
+      y: { min: 0, max: 100, span: 100, ticks: [0, 25, 50, 75, 100], step: 25, label: scatterFields.y }
+    }
   },
   clusters: {
     ready: false,
@@ -747,31 +754,160 @@ function toggleSelection(rowId) {
   updateSelectionCheckboxes();
   updateSelectedCount();
 }
+
+function updateScatterTitle() {
+  if (!dom.scatterTitle) return;
+  dom.scatterTitle.textContent = `${scatterFields.y} vs. ${scatterFields.x}`;
+}
+
+function syncScatterAxisSelects() {
+  if (dom.scatterXAxis) dom.scatterXAxis.value = scatterFields.x;
+  if (dom.scatterYAxis) dom.scatterYAxis.value = scatterFields.y;
+}
+
+function buildScatterAxisControls() {
+  if (dom.scatterXAxis) {
+    dom.scatterXAxis.innerHTML = numericFields.map(field => `<option value="${field}">${field}</option>`).join("");
+  }
+  if (dom.scatterYAxis) {
+    dom.scatterYAxis.innerHTML = numericFields.map(field => `<option value="${field}">${field}</option>`).join("");
+  }
+  syncScatterAxisSelects();
+  updateScatterTitle();
+}
+
+function setScatterAxis(axis, value) {
+  if (!numericFields.includes(value)) return;
+  if (scatterFields[axis] === value) return;
+  scatterFields[axis] = value;
+  state.scatter.dirty = true;
+  state.scatter.hoverId = null;
+  if (dom.scatterTooltip) {
+    dom.scatterTooltip.style.display = "none";
+  }
+  updateScatterTitle();
+  syncScatterAxisSelects();
+  scheduleScatterRender(true);
+}
+
+function getFieldAbsoluteRange(field) {
+  const range = state.filters[field];
+  if (!range) return { min: 0, max: 100 };
+  const min = Number.isFinite(range.absoluteMin) ? range.absoluteMin : 0;
+  const max = Number.isFinite(range.absoluteMax) ? range.absoluteMax : 100;
+  if (min === max) {
+    const offset = min === 0 ? 1 : Math.abs(min) * 0.1 || 1;
+    return { min: min - offset, max: max + offset };
+  }
+  return { min, max };
+}
+
+function niceNumber(range, round) {
+  if (range <= 0 || !Number.isFinite(range)) return 1;
+  const exponent = Math.floor(Math.log10(range));
+  const fraction = range / 10 ** exponent;
+  let niceFraction;
+  if (round) {
+    if (fraction < 1.5) niceFraction = 1;
+    else if (fraction < 3) niceFraction = 2;
+    else if (fraction < 7) niceFraction = 5;
+    else niceFraction = 10;
+  } else {
+    if (fraction <= 1) niceFraction = 1;
+    else if (fraction <= 2) niceFraction = 2;
+    else if (fraction <= 5) niceFraction = 5;
+    else niceFraction = 10;
+  }
+  return niceFraction * 10 ** exponent;
+}
+
+function buildAxisDomain(field) {
+  const { min: rawMin, max: rawMax } = getFieldAbsoluteRange(field);
+  let domainMin = rawMin;
+  let domainMax = rawMax;
+  if (domainMin === domainMax) {
+    const offset = domainMin === 0 ? 1 : Math.abs(domainMin) * 0.1 || 1;
+    domainMin -= offset;
+    domainMax += offset;
+  }
+  let span = domainMax - domainMin;
+  if (span <= 0 || !Number.isFinite(span)) {
+    domainMin = 0;
+    domainMax = 100;
+    span = 100;
+  }
+  const niceSpan = niceNumber(span, false);
+  let step = niceNumber(niceSpan / 4, true);
+  if (!Number.isFinite(step) || step <= 0) {
+    step = span / 4 || 1;
+  }
+  const niceMin = Math.floor(domainMin / step) * step;
+  const niceMax = Math.ceil(domainMax / step) * step;
+  const ticks = [];
+  let current = niceMin;
+  let guard = 0;
+  while (current <= niceMax + step / 2 && guard < 50) {
+    ticks.push(Number(current.toFixed(6)));
+    current += step;
+    guard++;
+  }
+  return {
+    min: niceMin,
+    max: niceMax,
+    span: niceMax - niceMin || step || 1,
+    ticks,
+    step,
+    label: field
+  };
+}
+
+function formatAxisTick(value, step) {
+  if (!Number.isFinite(value)) return "";
+  const absStep = Math.abs(step);
+  let decimals = 0;
+  if (absStep > 0 && Number.isFinite(absStep)) {
+    const trimmed = absStep.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+    decimals = trimmed.includes(".") ? trimmed.split(".")[1].length : 0;
+  }
+  decimals = Math.min(decimals, 4);
+  const str = value.toFixed(decimals);
+  const cleaned = decimals ? str.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1") : str;
+  return cleaned === "-0" ? "0" : cleaned;
+}
 function computeScatterPoints() {
   const canvas = dom.scatter;
   const dpr = window.devicePixelRatio || 1;
-  const width = canvas.clientWidth || canvas.parentElement.clientWidth || 520;
-  const size = Math.min(width, 720);
+  const parentWidth = canvas.parentElement?.clientWidth || canvas.clientWidth || 520;
+  let size = Math.min(parentWidth || 520, 720);
+  const viewportCapRaw = Math.min((window.innerHeight || 0) * 0.7, 580);
+  if (Number.isFinite(viewportCapRaw) && viewportCapRaw > 0) {
+    size = Math.min(size, viewportCapRaw);
+  }
+  if (!Number.isFinite(size) || size <= 0) {
+    size = 320;
+  }
   canvas.width = size * dpr;
   canvas.height = size * dpr;
+  canvas.style.width = `${size}px`;
   canvas.style.height = `${size}px`;
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const padding = 42;
-  const plotSize = size - padding * 2;
-  const rangeX = state.filters[scatterFields.x] || { absoluteMin: 0, absoluteMax: 100 };
-  const rangeY = state.filters[scatterFields.y] || { absoluteMin: 0, absoluteMax: 100 };
-  const spanX = rangeX.absoluteMax - rangeX.absoluteMin || 1;
-  const spanY = rangeY.absoluteMax - rangeY.absoluteMin || 1;
+  const plotSize = Math.max(size - padding * 2, 0);
+  const axisX = { ...buildAxisDomain(scatterFields.x), label: scatterFields.x };
+  const axisY = { ...buildAxisDomain(scatterFields.y), label: scatterFields.y };
+  state.scatter.axis = { x: axisX, y: axisY };
 
   const points = [];
   state.view.forEach((row, idx) => {
     const xVal = row._values[scatterFields.x];
     const yVal = row._values[scatterFields.y];
     if (xVal === null || yVal === null) return;
-    const x = padding + ((xVal - rangeX.absoluteMin) / spanX) * plotSize;
-    const y = size - padding - ((yVal - rangeY.absoluteMin) / spanY) * plotSize;
+    const xRatio = (xVal - axisX.min) / axisX.span;
+    const yRatio = (yVal - axisY.min) / axisY.span;
+    const x = padding + Math.min(Math.max(xRatio, 0), 1) * plotSize;
+    const y = size - padding - Math.min(Math.max(yRatio, 0), 1) * plotSize;
     const cluster = Number.isInteger(row._cluster) && row._cluster >= 0 && row._cluster < CLUSTER_COUNT ? row._cluster : null;
     const clusterColor = cluster !== null ? clusterColors[cluster] : null;
     points.push({
@@ -817,25 +953,54 @@ function renderScatter() {
   ctx.lineTo(size - padding, size - padding);
   ctx.stroke();
 
+  const fallbackAxis = {
+    x: { min: 0, max: 100, span: 100, ticks: [0, 20, 40, 60, 80, 100], step: 20, label: scatterFields.x },
+    y: { min: 0, max: 100, span: 100, ticks: [0, 20, 40, 60, 80, 100], step: 20, label: scatterFields.y }
+  };
+  const axis = state.scatter.axis || fallbackAxis;
+  const axisX = axis.x || fallbackAxis.x;
+  const axisY = axis.y || fallbackAxis.y;
+  const gridSpan = Math.max(size - padding * 2, 0);
+
   ctx.strokeStyle = "#f1f3f6";
   ctx.fillStyle = "#9ca3af";
   ctx.font = "11px system-ui";
   ctx.textAlign = "center";
-  const gridSpan = size - padding * 2;
-  for (let i = 0; i <= 100; i += 20) {
-    const x = padding + (i / 100) * gridSpan;
+  ctx.textBaseline = "top";
+  axisX.ticks.forEach(value => {
+    const ratio = (value - axisX.min) / axisX.span;
+    if (!Number.isFinite(ratio)) return;
+    const x = padding + ratio * gridSpan;
     ctx.beginPath();
     ctx.moveTo(x, size - padding);
     ctx.lineTo(x, padding);
     ctx.stroke();
-    ctx.fillText(i, x, size - padding + 16);
-  }
+    ctx.fillText(formatAxisTick(value, axisX.step), x, size - padding + 10);
+  });
+
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  axisY.ticks.forEach(value => {
+    const ratio = (value - axisY.min) / axisY.span;
+    if (!Number.isFinite(ratio)) return;
+    const y = size - padding - ratio * gridSpan;
+    ctx.beginPath();
+    ctx.moveTo(padding, y);
+    ctx.lineTo(size - padding, y);
+    ctx.stroke();
+    ctx.fillText(formatAxisTick(value, axisY.step), padding - 8, y);
+  });
+
+  ctx.textAlign = "center";
   ctx.save();
-  ctx.translate(12, size / 2);
+  ctx.translate(12, padding + gridSpan / 2);
   ctx.rotate(-Math.PI / 2);
-  ctx.fillText("Energy", 0, 0);
+  ctx.textBaseline = "middle";
+  ctx.fillText(axisY.label, 0, 0);
   ctx.restore();
-  ctx.fillText("Valence", size / 2, size - 12);
+
+  ctx.textBaseline = "bottom";
+  ctx.fillText(axisX.label, padding + gridSpan / 2, size - 12);
 
   points.forEach(point => {
     const isHover = point.rowId === state.scatter.hoverId;
@@ -1125,6 +1290,17 @@ function setupEvents() {
     dom.runClustersBtn.addEventListener("click", runKMeansClustering);
   }
 
+  if (dom.scatterXAxis) {
+    dom.scatterXAxis.addEventListener("change", event => {
+      setScatterAxis("x", event.target.value);
+    });
+  }
+  if (dom.scatterYAxis) {
+    dom.scatterYAxis.addEventListener("change", event => {
+      setScatterAxis("y", event.target.value);
+    });
+  }
+
   dom.loadCsvBtn.addEventListener("click", async () => {
     const path = dom.csvPath.value.trim() || "songs.csv";
     try {
@@ -1307,6 +1483,7 @@ async function initAuth() {
 }
 
 buildKnnControls();
+buildScatterAxisControls();
 attachFilterListeners();
 updateClusterUi();
 setupEvents();

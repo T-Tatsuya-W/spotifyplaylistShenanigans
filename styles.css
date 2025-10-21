@@ -132,12 +132,17 @@ label {
 input[type="text"],
 input[type="search"],
 input[type="number"],
+select,
 button {
   font: inherit;
   border-radius: 10px;
   border: 1px solid var(--border);
   padding: 9px 13px;
   background: #fff;
+}
+
+select {
+  min-width: 140px;
 }
 
 button {
@@ -213,10 +218,11 @@ button:not(:disabled):hover {
 }
 
 canvas#scatterPlot {
-  width: 100%;
+  width: min(100%, 720px);
   height: auto;
   display: block;
   max-height: min(70vh, 580px);
+  max-width: min(70vh, 580px);
   touch-action: none;
 }
 
@@ -391,6 +397,13 @@ details.mini-fold .mini-fold-body input[type="search"] {
   display: grid;
   gap: 12px;
   align-items: start;
+}
+
+.scatter-axis-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .knn-dims {
