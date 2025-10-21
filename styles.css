@@ -407,6 +407,20 @@ details.mini-fold .mini-fold-body input[type="search"] {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.cluster-config {
+  margin-top: 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.cluster-config .cluster-count-row {
+  align-items: center;
+}
+
+.cluster-config .muted {
+  line-height: 1.5;
+}
+
 .knn-dims {
   display: flex;
   flex-wrap: wrap;

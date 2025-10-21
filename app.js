@@ -4,8 +4,26 @@ const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const numericFields = ["BPM", "Energy", "Dance", "Valence", "Acoustic", "Popularity"];
 const scatterFields = { x: "Valence", y: "Energy" };
-const CLUSTER_COUNT = 6;
-const clusterColors = ["#ef4444", "#f97316", "#facc15", "#10b981", "#3b82f6", "#8b5cf6"];
+const clusterColors = [
+  "#ef4444",
+  "#f97316",
+  "#facc15",
+  "#10b981",
+  "#3b82f6",
+  "#8b5cf6",
+  "#ec4899",
+  "#14b8a6",
+  "#6366f1",
+  "#fb7185",
+  "#22c55e",
+  "#a855f7"
+];
+const DEFAULT_CLUSTER_COUNT = 6;
+const MIN_CLUSTER_COUNT = 1;
+const MAX_CLUSTER_COUNT = clusterColors.length;
+const SUGGESTION_SAMPLE_LIMIT = 350;
+const SUGGESTION_MAX_ITER = 40;
+const CLUSTER_SUGGESTION_DEBOUNCE = 240;
 const SCATTER_MAX_SIZE = 820;
 const SCATTER_VIEWPORT_RATIO = 0.8;
 const SCATTER_VIEWPORT_CAP = 720;
@@ -39,6 +57,9 @@ const dom = {
   runClustersBtn: document.getElementById("runClustersBtn"),
   clusterStatus: document.getElementById("clusterStatus"),
   clusterLegend: document.getElementById("clusterLegend"),
+  clusterCountInput: document.getElementById("clusterCount"),
+  clusterSuggestion: document.getElementById("clusterSuggestion"),
+  clusterSuggestionApply: document.getElementById("clusterSuggestionApply"),
   createClusterPlaylistsBtn: document.getElementById("createClusterPlaylistsBtn")
 };
 
@@ -75,12 +96,16 @@ const state = {
   },
   clusters: {
     ready: false,
-    counts: Array(CLUSTER_COUNT).fill(0),
+    targetK: DEFAULT_CLUSTER_COUNT,
+    counts: Array(DEFAULT_CLUSTER_COUNT).fill(0),
     sampleSize: 0,
     actualK: 0,
     skipped: 0,
-    descriptions: Array(CLUSTER_COUNT).fill(""),
-    baseName: ""
+    descriptions: Array(DEFAULT_CLUSTER_COUNT).fill(""),
+    baseName: "",
+    suggestedK: null,
+    suggestionSampleSize: 0,
+    suggestionMessage: "Load a CSV to see cluster suggestions."
   }
 };
 
@@ -263,6 +288,17 @@ function scheduleScatterRender(recompute = false) {
   });
 }
 
+let clusterSuggestionTimeoutId = null;
+function scheduleClusterSuggestionUpdate() {
+  if (clusterSuggestionTimeoutId !== null) {
+    clearTimeout(clusterSuggestionTimeoutId);
+  }
+  clusterSuggestionTimeoutId = setTimeout(() => {
+    clusterSuggestionTimeoutId = null;
+    updateClusterSuggestion();
+  }, CLUSTER_SUGGESTION_DEBOUNCE);
+}
+
 function refreshView() {
   if (!state.rows.length) {
     dom.csvBody.innerHTML = "";
@@ -375,11 +411,21 @@ function updateSelectedCount() {
 
 function updateClusterControls() {
   if (dom.runClustersBtn) {
+    const requestedK = state.clusters.targetK;
     dom.runClustersBtn.disabled = !state.rows.length;
+    dom.runClustersBtn.textContent = `Run ${requestedK}-cluster K-means`;
   }
   if (dom.createClusterPlaylistsBtn) {
     const hasToken = Boolean(localStorage.getItem("access_token"));
-    dom.createClusterPlaylistsBtn.disabled = !(state.clusters.ready && hasToken);
+    const clusterCount = state.clusters.ready ? state.clusters.actualK : state.clusters.targetK;
+    const label = clusterCount === 1 ? "Cluster Playlist" : "Cluster Playlists";
+    dom.createClusterPlaylistsBtn.textContent = `Create ${clusterCount} ${label}`;
+    dom.createClusterPlaylistsBtn.disabled = !(state.clusters.ready && hasToken && clusterCount > 0);
+  }
+  if (dom.clusterCountInput) {
+    dom.clusterCountInput.min = String(MIN_CLUSTER_COUNT);
+    dom.clusterCountInput.max = String(MAX_CLUSTER_COUNT);
+    dom.clusterCountInput.value = state.clusters.targetK;
   }
 }
 
@@ -398,12 +444,14 @@ function updateClusterUi() {
     }
   }
   if (dom.clusterLegend) {
-    if (!state.clusters.ready) {
+    if (!state.clusters.ready || !state.clusters.actualK) {
       dom.clusterLegend.classList.add("cluster-legend--empty");
       dom.clusterLegend.textContent = "Run K-means to colour the scatter plot.";
     } else {
       dom.clusterLegend.classList.remove("cluster-legend--empty");
-      dom.clusterLegend.innerHTML = clusterColors.map((color, idx) => {
+      const legendCount = Math.min(state.clusters.actualK, state.clusters.counts.length);
+      dom.clusterLegend.innerHTML = Array.from({ length: legendCount }, (_, idx) => {
+        const color = clusterColors[idx % clusterColors.length];
         const count = state.clusters.counts[idx] || 0;
         return `<div class="cluster-chip"><span class="chip-swatch" style="background:${color}"></span>Cluster ${idx + 1}<span class="chip-count">${count}</span></div>`;
       }).join("");
@@ -417,15 +465,350 @@ function resetClusterState() {
     row._cluster = null;
   });
   state.clusters.ready = false;
-  state.clusters.counts = Array(CLUSTER_COUNT).fill(0);
+  state.clusters.counts = Array(state.clusters.targetK).fill(0);
   state.clusters.sampleSize = 0;
   state.clusters.actualK = 0;
   state.clusters.skipped = 0;
-  state.clusters.descriptions = Array(CLUSTER_COUNT).fill("");
+  state.clusters.descriptions = Array(state.clusters.targetK).fill("");
   state.clusters.baseName = "";
   state.scatter.dirty = true;
   updateClusterUi();
   scheduleScatterRender(true);
+}
+
+function prepareClusteringData() {
+  const activeDims = numericFields.filter(field => state.knn.dimensions[field]);
+  if (!activeDims.length) {
+    return { error: "Enable at least one dimension before running clustering.", activeDims: [] };
+  }
+
+  const eligibleRows = getRowsMatchingFilters(false);
+  if (!eligibleRows.length) {
+    return { error: "No tracks match the current filters. Adjust the sliders and try again.", activeDims };
+  }
+
+  const dims = activeDims.length;
+  const completeRows = [];
+  const dimMins = new Array(dims).fill(Infinity);
+  const dimMaxs = new Array(dims).fill(-Infinity);
+  let skipped = 0;
+
+  eligibleRows.forEach(row => {
+    const vector = [];
+    let hasNull = false;
+    for (let d = 0; d < dims; d++) {
+      const field = activeDims[d];
+      const val = row._values[field];
+      if (val === null) {
+        hasNull = true;
+        break;
+      }
+      vector.push(val);
+    }
+    if (hasNull) {
+      skipped++;
+      return;
+    }
+    for (let d = 0; d < dims; d++) {
+      const val = vector[d];
+      if (val < dimMins[d]) dimMins[d] = val;
+      if (val > dimMaxs[d]) dimMaxs[d] = val;
+    }
+    completeRows.push({ row, vector });
+  });
+
+  if (!completeRows.length) {
+    return {
+      error: "No tracks matching the current filters have complete data for the selected dimensions.",
+      activeDims,
+      skipped,
+      eligibleCount: eligibleRows.length
+    };
+  }
+
+  const means = new Array(dims).fill(0);
+  completeRows.forEach(item => {
+    for (let d = 0; d < dims; d++) means[d] += item.vector[d];
+  });
+  for (let d = 0; d < dims; d++) means[d] /= completeRows.length;
+
+  const stds = new Array(dims).fill(0);
+  completeRows.forEach(item => {
+    for (let d = 0; d < dims; d++) {
+      const diff = item.vector[d] - means[d];
+      stds[d] += diff * diff;
+    }
+  });
+  for (let d = 0; d < dims; d++) stds[d] = Math.sqrt(stds[d] / completeRows.length) || 1;
+
+  const normalized = completeRows.map(item => item.vector.map((val, d) => (val - means[d]) / stds[d]));
+
+  return {
+    activeDims,
+    dims,
+    completeRows,
+    normalized,
+    dimMins,
+    dimMaxs,
+    means,
+    stds,
+    skipped,
+    eligibleCount: eligibleRows.length,
+    dimensionSummary: activeDims.join(", "),
+    playlistBaseName: activeDims.join(" • ")
+  };
+}
+
+function performKMeans(vectors, dims, k, maxIter = 100) {
+  if (!Array.isArray(vectors) || !vectors.length) {
+    return { assignments: [], centroids: [], actualK: 0 };
+  }
+  const requestedK = Math.max(1, Math.floor(k));
+  const actualK = Math.min(requestedK, vectors.length);
+  const assignments = new Array(vectors.length).fill(0);
+  const centroids = [];
+  const indices = vectors.map((_, idx) => idx);
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  for (let i = 0; i < actualK; i++) {
+    const idx = indices[i % indices.length];
+    centroids.push([...vectors[idx]]);
+  }
+
+  let changed = true;
+  let iter = 0;
+  const limit = Math.max(1, maxIter);
+  while (changed && iter < limit) {
+    changed = false;
+    iter++;
+    for (let i = 0; i < vectors.length; i++) {
+      const vector = vectors[i];
+      let bestCluster = assignments[i];
+      let bestDist = Infinity;
+      for (let c = 0; c < actualK; c++) {
+        const centroid = centroids[c];
+        let dist = 0;
+        for (let d = 0; d < dims; d++) {
+          const diff = vector[d] - centroid[d];
+          dist += diff * diff;
+        }
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestCluster = c;
+        }
+      }
+      if (assignments[i] !== bestCluster) {
+        assignments[i] = bestCluster;
+        changed = true;
+      }
+    }
+
+    const sums = Array.from({ length: actualK }, () => new Array(dims).fill(0));
+    const counts = new Array(actualK).fill(0);
+    for (let i = 0; i < vectors.length; i++) {
+      const cluster = assignments[i];
+      const vector = vectors[i];
+      counts[cluster]++;
+      for (let d = 0; d < dims; d++) {
+        sums[cluster][d] += vector[d];
+      }
+    }
+    for (let c = 0; c < actualK; c++) {
+      if (counts[c] === 0) {
+        const idx = Math.floor(Math.random() * vectors.length);
+        centroids[c] = [...vectors[idx]];
+        changed = true;
+      } else {
+        for (let d = 0; d < dims; d++) {
+          centroids[c][d] = sums[c][d] / Math.max(counts[c], 1);
+        }
+      }
+    }
+  }
+
+  return { assignments, centroids, actualK };
+}
+
+function computeClusterInertia(vectors, assignments, centroids, dims) {
+  if (!vectors.length || !centroids.length) return 0;
+  let sum = 0;
+  for (let i = 0; i < vectors.length; i++) {
+    const centroid = centroids[assignments[i]];
+    if (!centroid) continue;
+    const vector = vectors[i];
+    let dist = 0;
+    for (let d = 0; d < dims; d++) {
+      const diff = vector[d] - centroid[d];
+      dist += diff * diff;
+    }
+    sum += dist;
+  }
+  return sum;
+}
+
+function sampleVectorsForSuggestion(vectors) {
+  if (vectors.length <= SUGGESTION_SAMPLE_LIMIT) return vectors;
+  const step = vectors.length / SUGGESTION_SAMPLE_LIMIT;
+  const sample = [];
+  for (let i = 0; i < SUGGESTION_SAMPLE_LIMIT; i++) {
+    const idx = Math.min(vectors.length - 1, Math.floor(i * step));
+    sample.push(vectors[idx]);
+  }
+  return sample;
+}
+
+function updateClusterSuggestionUI() {
+  if (dom.clusterSuggestion) {
+    const message = state.clusters.suggestionMessage || "Load a CSV to see cluster suggestions.";
+    dom.clusterSuggestion.textContent = message;
+  }
+  if (dom.clusterSuggestionApply) {
+    const suggested = state.clusters.suggestedK;
+    const hasSuggestion = Number.isFinite(suggested) && suggested >= MIN_CLUSTER_COUNT;
+    const label = hasSuggestion ? `Use ${suggested}` : "Use suggestion";
+    if (dom.clusterSuggestionApply.textContent !== label) {
+      dom.clusterSuggestionApply.textContent = label;
+    }
+    dom.clusterSuggestionApply.disabled = !hasSuggestion || suggested === state.clusters.targetK;
+    if (!hasSuggestion) {
+      dom.clusterSuggestionApply.title = "No cluster suggestion is available right now.";
+    } else if (dom.clusterSuggestionApply.disabled) {
+      dom.clusterSuggestionApply.title = "Suggestion already applied.";
+    } else {
+      dom.clusterSuggestionApply.title = "Apply the suggested cluster count.";
+    }
+  }
+}
+
+function updateClusterSuggestion() {
+  if (!state.rows.length) {
+    state.clusters.suggestedK = null;
+    state.clusters.suggestionSampleSize = 0;
+    state.clusters.suggestionMessage = "Load a CSV to see cluster suggestions.";
+    updateClusterSuggestionUI();
+    return;
+  }
+
+  const prep = prepareClusteringData();
+  if (prep.error) {
+    state.clusters.suggestedK = null;
+    state.clusters.suggestionSampleSize = 0;
+    state.clusters.suggestionMessage = `Suggestion unavailable: ${prep.error}`;
+    updateClusterSuggestionUI();
+    return;
+  }
+
+  const { normalized, dims } = prep;
+  if (!normalized.length) {
+    state.clusters.suggestedK = null;
+    state.clusters.suggestionSampleSize = 0;
+    state.clusters.suggestionMessage = "Suggestion unavailable: no rows with complete data.";
+    updateClusterSuggestionUI();
+    return;
+  }
+
+  if (normalized.length === 1) {
+    state.clusters.suggestedK = 1;
+    state.clusters.suggestionSampleSize = 1;
+    state.clusters.suggestionMessage = "Suggested: 1 cluster (only 1 track with complete data).";
+    updateClusterSuggestionUI();
+    return;
+  }
+
+  const sample = sampleVectorsForSuggestion(normalized);
+  const maxCandidate = Math.min(MAX_CLUSTER_COUNT, sample.length);
+  if (maxCandidate < 1) {
+    state.clusters.suggestedK = null;
+    state.clusters.suggestionSampleSize = 0;
+    state.clusters.suggestionMessage = "Suggestion unavailable: not enough data.";
+    updateClusterSuggestionUI();
+    return;
+  }
+
+  const inertias = [];
+  for (let k = 1; k <= maxCandidate; k++) {
+    const result = performKMeans(sample, dims, k, SUGGESTION_MAX_ITER);
+    inertias.push(computeClusterInertia(sample, result.assignments, result.centroids, dims));
+  }
+
+  let suggestedK = 1;
+  if (maxCandidate >= 3) {
+    const first = { x: 1, y: inertias[0] };
+    const last = { x: maxCandidate, y: inertias[maxCandidate - 1] };
+    const dx = last.x - first.x;
+    const dy = last.y - first.y;
+    const denom = Math.hypot(dx, dy) || 1;
+    let maxDistance = -Infinity;
+    for (let k = 2; k < maxCandidate; k++) {
+      const point = { x: k, y: inertias[k - 1] };
+      const px = point.x - first.x;
+      const py = point.y - first.y;
+      const distance = Math.abs(dx * py - dy * px) / denom;
+      if (distance > maxDistance) {
+        maxDistance = distance;
+        suggestedK = k;
+      }
+    }
+    if (!Number.isFinite(maxDistance) || maxDistance <= 0) {
+      let fallbackK = 1;
+      let bestRatio = 0;
+      for (let k = 2; k <= maxCandidate; k++) {
+        const prev = inertias[k - 2];
+        const curr = inertias[k - 1];
+        const drop = prev - curr;
+        const ratio = prev !== 0 ? drop / Math.abs(prev) : 0;
+        if (ratio > bestRatio) {
+          bestRatio = ratio;
+          fallbackK = k;
+        }
+      }
+      suggestedK = fallbackK;
+    }
+  } else if (maxCandidate === 2) {
+    const drop = inertias[0] - inertias[1];
+    const ratio = inertias[0] !== 0 ? drop / Math.abs(inertias[0]) : 0;
+    suggestedK = ratio > 0.15 ? 2 : 1;
+  }
+
+  suggestedK = Math.max(
+    MIN_CLUSTER_COUNT,
+    Math.min(suggestedK, Math.min(MAX_CLUSTER_COUNT, normalized.length))
+  );
+
+  const total = normalized.length;
+  const sampleDesc = sample.length === total
+    ? `${sample.length} track${sample.length === 1 ? "" : "s"}`
+    : `${sample.length} of ${total} tracks`;
+  state.clusters.suggestedK = suggestedK;
+  state.clusters.suggestionSampleSize = sample.length;
+  state.clusters.suggestionMessage = `Suggested: ${suggestedK} cluster${suggestedK === 1 ? "" : "s"} (elbow method on ${sampleDesc}).`;
+  updateClusterSuggestionUI();
+}
+
+function applyClusterTarget(k, { fromSuggestion = false } = {}) {
+  if (!Number.isFinite(k)) {
+    if (dom.clusterCountInput) dom.clusterCountInput.value = state.clusters.targetK;
+    return;
+  }
+  const rounded = Math.round(k);
+  const clamped = Math.max(MIN_CLUSTER_COUNT, Math.min(rounded, MAX_CLUSTER_COUNT));
+  if (clamped === state.clusters.targetK) {
+    if (dom.clusterCountInput) dom.clusterCountInput.value = clamped;
+    updateClusterSuggestionUI();
+    return;
+  }
+  const previousBaseName = state.clusters.baseName;
+  state.clusters.targetK = clamped;
+  resetClusterState();
+  state.clusters.baseName = previousBaseName;
+  updateClusterSuggestionUI();
+  if (fromSuggestion) {
+    log(`Cluster count set to ${clamped} based on suggestion.`, "ok");
+  } else {
+    log(`Cluster count set to ${clamped}.`, "ok");
+  }
 }
 
 function runKMeansClustering() {
@@ -436,16 +819,25 @@ function runKMeansClustering() {
   if (dom.runClustersBtn) dom.runClustersBtn.disabled = true;
 
   try {
-    const activeDims = numericFields.filter(field => state.knn.dimensions[field]);
-    if (!activeDims.length) {
-      log("Enable at least one dimension before running clustering.", "err");
+    const prep = prepareClusteringData();
+    if (prep.error) {
       resetClusterState();
+      log(prep.error, "err");
       return;
     }
 
-    const dims = activeDims.length;
-    const dimensionSummary = activeDims.join(", ");
-    const playlistBaseName = activeDims.join(" • ");
+    const {
+      activeDims,
+      dims,
+      completeRows,
+      normalized,
+      dimMins,
+      dimMaxs,
+      skipped,
+      dimensionSummary,
+      playlistBaseName
+    } = prep;
+
     if (playlistBaseName) {
       const baseChanged = state.clusters.baseName !== playlistBaseName;
       state.clusters.baseName = playlistBaseName;
@@ -458,140 +850,42 @@ function runKMeansClustering() {
     } else {
       state.clusters.baseName = "";
     }
-    const eligibleRows = getRowsMatchingFilters(false);
-    if (!eligibleRows.length) {
-      resetClusterState();
-      log("No tracks match the current filters. Adjust the sliders and try again.", "err");
-      return;
-    }
-    const completeRows = [];
-    const dimMins = new Array(dims).fill(Infinity);
-    const dimMaxs = new Array(dims).fill(-Infinity);
-    let skipped = 0;
-    eligibleRows.forEach(row => {
-      const vector = [];
-      let hasNull = false;
-      for (let d = 0; d < dims; d++) {
-        const field = activeDims[d];
-        const val = row._values[field];
-        if (val === null) {
-          hasNull = true;
-          break;
-        }
-        vector.push(val);
-      }
-      if (hasNull) {
-        row._cluster = null;
-        skipped++;
-        return;
-      }
-      for (let d = 0; d < dims; d++) {
-        const val = vector[d];
-        if (val < dimMins[d]) dimMins[d] = val;
-        if (val > dimMaxs[d]) dimMaxs[d] = val;
-      }
-      completeRows.push({ row, vector });
-    });
 
     if (!completeRows.length) {
       resetClusterState();
       log("No tracks matching the current filters have complete data for the selected dimensions.", "err");
       return;
     }
-    const means = new Array(dims).fill(0);
-    completeRows.forEach(item => {
-      for (let d = 0; d < dims; d++) means[d] += item.vector[d];
-    });
-    for (let d = 0; d < dims; d++) means[d] /= completeRows.length;
 
-    const stds = new Array(dims).fill(0);
-    completeRows.forEach(item => {
-      for (let d = 0; d < dims; d++) {
-        const diff = item.vector[d] - means[d];
-        stds[d] += diff * diff;
-      }
-    });
-    for (let d = 0; d < dims; d++) stds[d] = Math.sqrt(stds[d] / completeRows.length) || 1;
-
-    const normalized = completeRows.map(item => item.vector.map((val, d) => (val - means[d]) / stds[d]));
-    const actualK = Math.min(CLUSTER_COUNT, normalized.length);
-
-    const indices = normalized.map((_, idx) => idx);
-    for (let i = indices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [indices[i], indices[j]] = [indices[j], indices[i]];
-    }
-    const centroids = [];
-    for (let i = 0; i < actualK; i++) {
-      const idx = indices[i % indices.length];
-      centroids.push([...normalized[idx]]);
-    }
-
-    const assignments = new Array(normalized.length).fill(0);
-    let changed = true;
-    let iter = 0;
-    const maxIter = 100;
-    while (changed && iter < maxIter) {
-      changed = false;
-      iter++;
-      for (let i = 0; i < normalized.length; i++) {
-        const vector = normalized[i];
-        let bestCluster = assignments[i];
-        let bestDist = Infinity;
-        for (let c = 0; c < actualK; c++) {
-          const centroid = centroids[c];
-          let dist = 0;
-          for (let d = 0; d < dims; d++) {
-            const diff = vector[d] - centroid[d];
-            dist += diff * diff;
-          }
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestCluster = c;
-          }
-        }
-        if (assignments[i] !== bestCluster) {
-          assignments[i] = bestCluster;
-          changed = true;
-        }
-      }
-
-      const sums = Array.from({ length: actualK }, () => new Array(dims).fill(0));
-      const counts = new Array(actualK).fill(0);
-      for (let i = 0; i < normalized.length; i++) {
-        const cluster = assignments[i];
-        const vector = normalized[i];
-        counts[cluster]++;
-        for (let d = 0; d < dims; d++) {
-          sums[cluster][d] += vector[d];
-        }
-      }
-      for (let c = 0; c < actualK; c++) {
-        if (counts[c] === 0) {
-          const idx = Math.floor(Math.random() * normalized.length);
-          centroids[c] = [...normalized[idx]];
-          changed = true;
-        } else {
-          for (let d = 0; d < dims; d++) {
-            centroids[c][d] = sums[c][d] / counts[c];
-          }
-        }
-      }
-    }
-
-    const counts = Array(CLUSTER_COUNT).fill(0);
-    const clusterSums = Array.from({ length: actualK }, () => new Array(dims).fill(0));
-    const clusterCounts = new Array(actualK).fill(0);
     state.rows.forEach(row => {
       row._cluster = null;
     });
+
+    const requestedK = Math.max(MIN_CLUSTER_COUNT, Math.min(state.clusters.targetK, MAX_CLUSTER_COUNT));
+    const actualK = Math.min(requestedK, normalized.length);
+    if (!actualK) {
+      resetClusterState();
+      log("Unable to form clusters with the current selection.", "err");
+      return;
+    }
+    if (requestedK > normalized.length) {
+      log(`Only ${normalized.length} track${normalized.length === 1 ? "" : "s"} have complete data; using ${actualK} cluster${actualK === 1 ? "" : "s"}.`, "ok");
+    }
+
+    const { assignments } = performKMeans(normalized, dims, actualK);
+
+    const counts = Array(state.clusters.targetK).fill(0);
+    const clusterSums = Array.from({ length: actualK }, () => new Array(dims).fill(0));
+    const clusterCounts = new Array(actualK).fill(0);
     completeRows.forEach((item, idx) => {
       const cluster = assignments[idx];
       item.row._cluster = cluster;
-      counts[cluster]++;
-      clusterCounts[cluster]++;
-      for (let d = 0; d < dims; d++) {
-        clusterSums[cluster][d] += item.vector[d];
+      if (cluster < counts.length) counts[cluster]++;
+      if (cluster < actualK) {
+        clusterCounts[cluster]++;
+        for (let d = 0; d < dims; d++) {
+          clusterSums[cluster][d] += item.vector[d];
+        }
       }
     });
 
@@ -621,8 +915,8 @@ function runKMeansClustering() {
 
     const formatField = (field) => field.replace(/_/g, " ").toLowerCase();
 
-    const clusterDescriptions = Array(CLUSTER_COUNT).fill("");
-    for (let c = 0; c < CLUSTER_COUNT; c++) {
+    const clusterDescriptions = Array(state.clusters.targetK).fill("");
+    for (let c = 0; c < state.clusters.targetK; c++) {
       if (c >= actualK) {
         clusterDescriptions[c] = "Cluster was not generated for the current sample.";
         continue;
@@ -650,9 +944,13 @@ function runKMeansClustering() {
     updateClusterUi();
     scheduleScatterRender(true);
 
-    const summary = `K-means assigned ${actualK} cluster${actualK === 1 ? "" : "s"} to ${completeRows.length} track${completeRows.length === 1 ? "" : "s"}` +
-      (skipped ? ` (${skipped} skipped)` : "") +
-      ` using ${dims} dimension${dims === 1 ? "" : "s"} (${dimensionSummary}).`;
+    let summary = `K-means assigned ${actualK} cluster${actualK === 1 ? "" : "s"} to ${completeRows.length} track${completeRows.length === 1 ? "" : "s"}`;
+    if (skipped) summary += ` (${skipped} skipped)`;
+    if (dimensionSummary) {
+      summary += ` using ${dims} dimension${dims === 1 ? "" : "s"} (${dimensionSummary}).`;
+    } else {
+      summary += ` using ${dims} dimension${dims === 1 ? "" : "s"}.`;
+    }
     log(summary, "ok");
   } catch (err) {
     console.error(err);
@@ -696,6 +994,7 @@ function attachFilterListeners() {
     }
     updateFilterLabels(field);
     scheduleViewRefresh();
+    scheduleClusterSuggestionUpdate();
   });
   filterListenersAttached = true;
 }
@@ -945,8 +1244,9 @@ function computeScatterPoints() {
     const yRatio = (yVal - axisY.min) / axisY.span;
     const x = padding + Math.min(Math.max(xRatio, 0), 1) * plotSize;
     const y = size - padding - Math.min(Math.max(yRatio, 0), 1) * plotSize;
-    const cluster = Number.isInteger(row._cluster) && row._cluster >= 0 && row._cluster < CLUSTER_COUNT ? row._cluster : null;
-    const clusterColor = cluster !== null ? clusterColors[cluster] : null;
+    const clusterLimit = state.clusters.counts.length;
+    const cluster = Number.isInteger(row._cluster) && row._cluster >= 0 && row._cluster < clusterLimit ? row._cluster : null;
+    const clusterColor = cluster !== null ? clusterColors[cluster % clusterColors.length] : null;
     points.push({
       x,
       y,
@@ -1249,11 +1549,16 @@ async function createClusterPlaylists() {
   try {
     const fallbackName = state.clusters.baseName || "PKCE Demo Playlist";
     const baseName = dom.playlistName.value.trim() || fallbackName;
-    const clusterUris = Array.from({ length: CLUSTER_COUNT }, () => []);
+    const clusterCount = state.clusters.actualK || 0;
+    if (!clusterCount) {
+      log("No clusters available to export. Run K-means first.", "err");
+      return;
+    }
+    const clusterUris = Array.from({ length: clusterCount }, () => []);
     let missingUris = 0;
     state.rows.forEach(row => {
       const cluster = row._cluster;
-      if (!Number.isInteger(cluster) || cluster < 0 || cluster >= CLUSTER_COUNT) return;
+      if (!Number.isInteger(cluster) || cluster < 0 || cluster >= clusterCount) return;
       const uri = row.Spotify_URI;
       if (uri && uri.length > 0) clusterUris[cluster].push(uri);
       else missingUris++;
@@ -1272,7 +1577,7 @@ async function createClusterPlaylists() {
     log(`Hello ${me.json.display_name || userId}!`, "ok");
 
     const clusterDescriptions = state.clusters.descriptions || [];
-    for (let i = 0; i < CLUSTER_COUNT; i++) {
+    for (let i = 0; i < clusterCount; i++) {
       const uris = clusterUris[i];
       const playlistName = `${baseName} #${i + 1}`;
       log(`Creating playlist "${playlistName}" for cluster ${i + 1} (${uris.length} track${uris.length === 1 ? "" : "s"})…`);
@@ -1317,6 +1622,7 @@ function resetFilters() {
     updateFilterLabels(field);
   });
   scheduleViewRefresh();
+  scheduleClusterSuggestionUpdate();
 }
 
 function setupEvents() {
@@ -1327,6 +1633,19 @@ function setupEvents() {
   }
   if (dom.runClustersBtn) {
     dom.runClustersBtn.addEventListener("click", runKMeansClustering);
+  }
+
+  if (dom.clusterCountInput) {
+    dom.clusterCountInput.addEventListener("change", event => {
+      applyClusterTarget(Number(event.target.value));
+    });
+  }
+  if (dom.clusterSuggestionApply) {
+    dom.clusterSuggestionApply.addEventListener("click", () => {
+      const suggested = state.clusters.suggestedK;
+      if (!Number.isFinite(suggested)) return;
+      applyClusterTarget(suggested, { fromSuggestion: true });
+    });
   }
 
   if (dom.scatterXAxis) {
@@ -1365,6 +1684,7 @@ function setupEvents() {
       state.scatter.dirty = true;
       bootstrapFilters();
       refreshView();
+      scheduleClusterSuggestionUpdate();
       log(`Loaded ${state.rows.length} rows.`, "ok");
     } catch (err) {
       console.error(err);
@@ -1375,6 +1695,7 @@ function setupEvents() {
   dom.filterInput.addEventListener("input", debounce(event => {
     state.search = event.target.value.trim().toLowerCase();
     scheduleViewRefresh();
+    scheduleClusterSuggestionUpdate();
   }, 180));
 
   dom.selectAll.addEventListener("change", event => {
@@ -1421,6 +1742,7 @@ function setupEvents() {
       log("Cleared existing clusters after dimension change. Re-run K-means to update.", "ok");
     }
     scheduleScatterRender(true);
+    scheduleClusterSuggestionUpdate();
   });
 
   dom.tableHead.addEventListener("click", event => {
@@ -1525,6 +1847,7 @@ buildKnnControls();
 buildScatterAxisControls();
 attachFilterListeners();
 updateClusterUi();
+updateClusterSuggestionUI();
 setupEvents();
 initAuth();
 updateSelectedCount();
