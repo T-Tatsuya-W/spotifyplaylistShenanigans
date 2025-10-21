@@ -67,7 +67,8 @@ const state = {
     counts: Array(CLUSTER_COUNT).fill(0),
     sampleSize: 0,
     actualK: 0,
-    skipped: 0
+    skipped: 0,
+    descriptions: Array(CLUSTER_COUNT).fill("")
   }
 };
 
@@ -401,6 +402,7 @@ function resetClusterState() {
   state.clusters.sampleSize = 0;
   state.clusters.actualK = 0;
   state.clusters.skipped = 0;
+  state.clusters.descriptions = Array(CLUSTER_COUNT).fill("");
   state.scatter.dirty = true;
   updateClusterUi();
   scheduleScatterRender(true);
@@ -421,12 +423,16 @@ function runKMeansClustering() {
       return;
     }
 
+    const dims = activeDims.length;
     const completeRows = [];
+    const dimMins = new Array(dims).fill(Infinity);
+    const dimMaxs = new Array(dims).fill(-Infinity);
     let skipped = 0;
     state.rows.forEach(row => {
       const vector = [];
       let hasNull = false;
-      for (const field of activeDims) {
+      for (let d = 0; d < dims; d++) {
+        const field = activeDims[d];
         const val = row._values[field];
         if (val === null) {
           hasNull = true;
@@ -439,6 +445,11 @@ function runKMeansClustering() {
         skipped++;
         return;
       }
+      for (let d = 0; d < dims; d++) {
+        const val = vector[d];
+        if (val < dimMins[d]) dimMins[d] = val;
+        if (val > dimMaxs[d]) dimMaxs[d] = val;
+      }
       completeRows.push({ row, vector });
     });
 
@@ -447,8 +458,6 @@ function runKMeansClustering() {
       log("No tracks have complete data for the selected dimensions.", "err");
       return;
     }
-
-    const dims = activeDims.length;
     const means = new Array(dims).fill(0);
     completeRows.forEach(item => {
       for (let d = 0; d < dims; d++) means[d] += item.vector[d];
@@ -531,6 +540,8 @@ function runKMeansClustering() {
     }
 
     const counts = Array(CLUSTER_COUNT).fill(0);
+    const clusterSums = Array.from({ length: actualK }, () => new Array(dims).fill(0));
+    const clusterCounts = new Array(actualK).fill(0);
     state.rows.forEach(row => {
       row._cluster = null;
     });
@@ -538,13 +549,63 @@ function runKMeansClustering() {
       const cluster = assignments[idx];
       item.row._cluster = cluster;
       counts[cluster]++;
+      clusterCounts[cluster]++;
+      for (let d = 0; d < dims; d++) {
+        clusterSums[cluster][d] += item.vector[d];
+      }
     });
+
+    const dimensionThresholds = activeDims.map((field, dimIdx) => {
+      const min = dimMins[dimIdx];
+      const max = dimMaxs[dimIdx];
+      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+        return { field, min, max, lower: NaN, upper: NaN };
+      }
+      const range = max - min;
+      if (range <= 0) {
+        return { field, min, max, lower: min, upper: max };
+      }
+      const lower = min + range / 3;
+      const upper = min + (2 * range) / 3;
+      return { field, min, max, lower, upper };
+    });
+
+    const describeLevel = (value, stats) => {
+      if (!Number.isFinite(value) || !Number.isFinite(stats.lower) || !Number.isFinite(stats.upper) || stats.max === stats.min) {
+        return "Medium";
+      }
+      if (value <= stats.lower) return "Low";
+      if (value >= stats.upper) return "High";
+      return "Medium";
+    };
+
+    const formatField = (field) => field.replace(/_/g, " ").toLowerCase();
+
+    const clusterDescriptions = Array(CLUSTER_COUNT).fill("");
+    for (let c = 0; c < CLUSTER_COUNT; c++) {
+      if (c >= actualK) {
+        clusterDescriptions[c] = "Cluster was not generated for the current sample.";
+        continue;
+      }
+      if (clusterCounts[c] === 0) {
+        clusterDescriptions[c] = "No tracks assigned to this cluster.";
+        continue;
+      }
+      const phrases = activeDims.map((field, dimIdx) => {
+        const average = clusterSums[c][dimIdx] / clusterCounts[c];
+        const stats = dimensionThresholds[dimIdx];
+        const level = describeLevel(average, stats);
+        return `${level} ${formatField(field)}`;
+      });
+      clusterDescriptions[c] = `${phrases.join(", ")}.`;
+    }
 
     state.clusters.ready = true;
     state.clusters.counts = counts;
     state.clusters.sampleSize = completeRows.length;
     state.clusters.actualK = actualK;
     state.clusters.skipped = skipped;
+    state.clusters.descriptions = clusterDescriptions;
     state.scatter.dirty = true;
     updateClusterUi();
     scheduleScatterRender(true);
@@ -1006,15 +1067,19 @@ async function createClusterPlaylists() {
     const userId = me.json.id;
     log(`Hello ${me.json.display_name || userId}!`, "ok");
 
+    const clusterDescriptions = state.clusters.descriptions || [];
     for (let i = 0; i < CLUSTER_COUNT; i++) {
       const uris = clusterUris[i];
       const playlistName = `${baseName} #${i + 1}`;
       log(`Creating playlist "${playlistName}" for cluster ${i + 1} (${uris.length} track${uris.length === 1 ? "" : "s"})…`);
+      const description = clusterDescriptions[i] && clusterDescriptions[i].trim().length
+        ? clusterDescriptions[i]
+        : `Cluster ${i + 1} generated by Spotify CSV Browser`;
       const newPl = await apiFetch(`/users/${encodeURIComponent(userId)}/playlists`, {
         method: "POST",
         body: JSON.stringify({
           name: playlistName,
-          description: `Cluster ${i + 1} generated by Spotify CSV Browser`,
+          description,
           public: false
         })
       });
