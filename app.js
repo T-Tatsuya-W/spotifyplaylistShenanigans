@@ -2,7 +2,95 @@ const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";
 const SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
-const numericFields = ["BPM", "Energy", "Dance", "Valence", "Acoustic", "Popularity"];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const numericFields = ["BPM", "Energy", "Dance", "Valence", "Acoustic", "Popularity", "ReleaseDate"];
+
+const fieldMeta = {
+  ReleaseDate: {
+    label: "Release Date",
+    step: 1,
+    defaultMin: 0,
+    defaultMax: 0,
+    extract: (row) => {
+      const candidates = [row.Release, row.Spotify_Release_Date, row.release_date, row.Release_Date];
+      for (const value of candidates) {
+        if (value && String(value).trim().length) {
+          return String(value).trim();
+        }
+      }
+      return "";
+    },
+    parse: (value) => parseReleaseDateValue(value),
+    format: (value) => formatReleaseRangeValue(value),
+    formatTick: (value, step) => formatReleaseTickValue(value, step)
+  }
+};
+
+function getFieldMeta(field) {
+  return fieldMeta[field] || {};
+}
+
+function getFieldLabel(field) {
+  const meta = getFieldMeta(field);
+  return meta.label || field;
+}
+
+function getFieldStep(field) {
+  const meta = getFieldMeta(field);
+  return Number.isFinite(meta.step) && meta.step > 0 ? meta.step : 1;
+}
+
+function formatFieldValue(field, value) {
+  const meta = getFieldMeta(field);
+  if (!Number.isFinite(value)) {
+    if (meta && typeof meta.format === "function") {
+      return meta.format(value);
+    }
+    return meta.emptyLabel || "—";
+  }
+  if (meta && typeof meta.format === "function") {
+    return meta.format(value);
+  }
+  if (Math.abs(value - Math.round(value)) < 1e-6) {
+    return String(Math.round(value));
+  }
+  return Number(value.toFixed(2)).toString();
+}
+
+function parseReleaseDateValue(value) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const isoMatch = raw.match(/\d{4}-\d{2}-\d{2}/);
+  const target = isoMatch ? isoMatch[0] : raw;
+  const timestamp = Date.parse(target);
+  if (!Number.isFinite(timestamp)) return null;
+  return Math.floor(timestamp / DAY_MS);
+}
+
+function formatReleaseRangeValue(value) {
+  if (!Number.isFinite(value)) return "—";
+  const date = new Date(Math.round(value) * DAY_MS);
+  if (!Number.isFinite(date.getTime())) return "—";
+  return date.toISOString().slice(0, 10);
+}
+
+function formatReleaseTickValue(value, step) {
+  if (!Number.isFinite(value)) return "";
+  const days = Math.round(value);
+  const date = new Date(days * DAY_MS);
+  if (!Number.isFinite(date.getTime())) return "";
+  const approxStep = Number.isFinite(step) && step > 0 ? Math.abs(step) : null;
+  if (approxStep && approxStep >= 365) {
+    return String(date.getUTCFullYear());
+  }
+  if (approxStep && approxStep >= 30) {
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    return `${date.getUTCFullYear()}-${month}`;
+  }
+  return date.toISOString().slice(0, 10);
+}
 const scatterFields = { x: "Valence", y: "Energy" };
 const clusterColors = [
   "#ef4444",
@@ -77,7 +165,8 @@ const state = {
       Dance: true,
       Valence: true,
       Acoustic: false,
-      Popularity: false
+      Popularity: false,
+      ReleaseDate: false
     }
   },
   selected: new Set(),
@@ -90,8 +179,8 @@ const state = {
     lastTapTime: 0,
     skipNextDblClick: false,
     axis: {
-      x: { min: 0, max: 100, span: 100, ticks: [0, 25, 50, 75, 100], step: 25, label: scatterFields.x },
-      y: { min: 0, max: 100, span: 100, ticks: [0, 25, 50, 75, 100], step: 25, label: scatterFields.y }
+      x: { field: scatterFields.x, min: 0, max: 100, span: 100, ticks: [0, 25, 50, 75, 100], step: 25, label: getFieldLabel(scatterFields.x) },
+      y: { field: scatterFields.y, min: 0, max: 100, span: 100, ticks: [0, 25, 50, 75, 100], step: 25, label: getFieldLabel(scatterFields.y) }
     }
   },
   clusters: {
@@ -554,8 +643,8 @@ function prepareClusteringData() {
     stds,
     skipped,
     eligibleCount: eligibleRows.length,
-    dimensionSummary: activeDims.join(", "),
-    playlistBaseName: activeDims.join(" • ")
+    dimensionSummary: activeDims.map(getFieldLabel).join(", "),
+    playlistBaseName: activeDims.map(getFieldLabel).join(" • ")
   };
 }
 
@@ -913,7 +1002,7 @@ function runKMeansClustering() {
       return "Medium";
     };
 
-    const formatField = (field) => field.replace(/_/g, " ").toLowerCase();
+    const formatField = (field) => getFieldLabel(field).toLowerCase();
 
     const clusterDescriptions = Array(state.clusters.targetK).fill("");
     for (let c = 0; c < state.clusters.targetK; c++) {
@@ -965,14 +1054,20 @@ function buildFilters() {
   dom.filtersContainer.innerHTML = "";
   numericFields.forEach(field => {
     const range = state.filters[field];
+    const label = getFieldLabel(field);
+    const absoluteMin = Number.isFinite(range?.absoluteMin) ? range.absoluteMin : 0;
+    const absoluteMax = Number.isFinite(range?.absoluteMax) ? range.absoluteMax : 0;
+    const currentMin = Number.isFinite(range?.min) ? range.min : absoluteMin;
+    const currentMax = Number.isFinite(range?.max) ? range.max : absoluteMax;
+    const step = getFieldStep(field);
     const wrapper = document.createElement("div");
     wrapper.className = "filter-card";
     wrapper.dataset.field = field;
     wrapper.innerHTML = `
-      <div class="filter-label">${field}</div>
-      <div class="range-values"><span data-role="min">${range.min}</span><span data-role="max">${range.max}</span></div>
-      <input type="range" class="filter-slider" data-field="${field}" data-bound="min" min="${range.absoluteMin}" max="${range.absoluteMax}" value="${range.min}" step="1" />
-      <input type="range" class="filter-slider" data-field="${field}" data-bound="max" min="${range.absoluteMin}" max="${range.absoluteMax}" value="${range.max}" step="1" />
+      <div class="filter-label">${label}</div>
+      <div class="range-values"><span data-role="min">${formatFieldValue(field, currentMin)}</span><span data-role="max">${formatFieldValue(field, currentMax)}</span></div>
+      <input type="range" class="filter-slider" data-field="${field}" data-bound="min" min="${absoluteMin}" max="${absoluteMax}" value="${currentMin}" step="${step}" />
+      <input type="range" class="filter-slider" data-field="${field}" data-bound="max" min="${absoluteMin}" max="${absoluteMax}" value="${currentMax}" step="${step}" />
     `;
     dom.filtersContainer.appendChild(wrapper);
   });
@@ -1005,11 +1100,14 @@ function updateFilterLabels(field) {
   if (!wrapper) return;
   const minEl = wrapper.querySelector('[data-role="min"]');
   const maxEl = wrapper.querySelector('[data-role="max"]');
-  if (minEl) minEl.textContent = range.min;
-  if (maxEl) maxEl.textContent = range.max;
+  const displayMin = Number.isFinite(range?.min) ? range.min : Number.isFinite(range?.absoluteMin) ? range.absoluteMin : 0;
+  const displayMax = Number.isFinite(range?.max) ? range.max : Number.isFinite(range?.absoluteMax) ? range.absoluteMax : 0;
+  if (minEl) minEl.textContent = formatFieldValue(field, displayMin);
+  if (maxEl) maxEl.textContent = formatFieldValue(field, displayMax);
   wrapper.querySelectorAll(".filter-slider").forEach(slider => {
     const bound = slider.dataset.bound;
-    slider.value = range[bound];
+    const fallback = bound === "min" ? displayMin : displayMax;
+    slider.value = Number.isFinite(range?.[bound]) ? range[bound] : fallback;
   });
 }
 
@@ -1020,7 +1118,7 @@ function buildKnnControls() {
     button.type = "button";
     button.className = `knn-dim-btn${state.knn.dimensions[field] ? " active" : ""}`;
     button.dataset.dim = field;
-    button.textContent = field;
+    button.textContent = getFieldLabel(field);
     button.setAttribute("aria-pressed", state.knn.dimensions[field] ? "true" : "false");
     dom.knnDimContainer.appendChild(button);
   });
@@ -1093,7 +1191,7 @@ function toggleSelection(rowId) {
 
 function updateScatterTitle() {
   if (!dom.scatterTitle) return;
-  dom.scatterTitle.textContent = `${scatterFields.y} vs. ${scatterFields.x}`;
+  dom.scatterTitle.textContent = `${getFieldLabel(scatterFields.y)} vs. ${getFieldLabel(scatterFields.x)}`;
 }
 
 function syncScatterAxisSelects() {
@@ -1103,10 +1201,10 @@ function syncScatterAxisSelects() {
 
 function buildScatterAxisControls() {
   if (dom.scatterXAxis) {
-    dom.scatterXAxis.innerHTML = numericFields.map(field => `<option value="${field}">${field}</option>`).join("");
+    dom.scatterXAxis.innerHTML = numericFields.map(field => `<option value="${field}">${getFieldLabel(field)}</option>`).join("");
   }
   if (dom.scatterYAxis) {
-    dom.scatterYAxis.innerHTML = numericFields.map(field => `<option value="${field}">${field}</option>`).join("");
+    dom.scatterYAxis.innerHTML = numericFields.map(field => `<option value="${field}">${getFieldLabel(field)}</option>`).join("");
   }
   syncScatterAxisSelects();
   updateScatterTitle();
@@ -1188,17 +1286,26 @@ function buildAxisDomain(field) {
     guard++;
   }
   return {
+    field,
     min: niceMin,
     max: niceMax,
     span: niceMax - niceMin || step || 1,
     ticks,
     step,
-    label: field
+    label: getFieldLabel(field)
   };
 }
 
-function formatAxisTick(value, step) {
+function formatAxisTick(value, step, field) {
+  const meta = getFieldMeta(field);
+  if (meta && typeof meta.formatTick === "function") {
+    const formatted = meta.formatTick(value, step);
+    if (formatted !== undefined) return formatted;
+  }
   if (!Number.isFinite(value)) return "";
+  if (meta && typeof meta.format === "function") {
+    return meta.format(value);
+  }
   const absStep = Math.abs(step);
   let decimals = 0;
   if (absStep > 0 && Number.isFinite(absStep)) {
@@ -1231,8 +1338,8 @@ function computeScatterPoints() {
 
   const padding = SCATTER_PADDING;
   const plotSize = Math.max(size - padding * 2, 0);
-  const axisX = { ...buildAxisDomain(scatterFields.x), label: scatterFields.x };
-  const axisY = { ...buildAxisDomain(scatterFields.y), label: scatterFields.y };
+  const axisX = buildAxisDomain(scatterFields.x);
+  const axisY = buildAxisDomain(scatterFields.y);
   state.scatter.axis = { x: axisX, y: axisY };
 
   const points = [];
@@ -1291,8 +1398,8 @@ function renderScatter() {
   ctx.stroke();
 
   const fallbackAxis = {
-    x: { min: 0, max: 100, span: 100, ticks: [0, 20, 40, 60, 80, 100], step: 20, label: scatterFields.x },
-    y: { min: 0, max: 100, span: 100, ticks: [0, 20, 40, 60, 80, 100], step: 20, label: scatterFields.y }
+    x: { field: scatterFields.x, min: 0, max: 100, span: 100, ticks: [0, 20, 40, 60, 80, 100], step: 20, label: getFieldLabel(scatterFields.x) },
+    y: { field: scatterFields.y, min: 0, max: 100, span: 100, ticks: [0, 20, 40, 60, 80, 100], step: 20, label: getFieldLabel(scatterFields.y) }
   };
   const axis = state.scatter.axis || fallbackAxis;
   const axisX = axis.x || fallbackAxis.x;
@@ -1312,7 +1419,7 @@ function renderScatter() {
     ctx.moveTo(x, size - padding);
     ctx.lineTo(x, padding);
     ctx.stroke();
-    ctx.fillText(formatAxisTick(value, axisX.step), x, size - padding + 10);
+    ctx.fillText(formatAxisTick(value, axisX.step, axisX.field || scatterFields.x), x, size - padding + 10);
   });
 
   ctx.textAlign = "right";
@@ -1325,7 +1432,7 @@ function renderScatter() {
     ctx.moveTo(padding, y);
     ctx.lineTo(size - padding, y);
     ctx.stroke();
-    ctx.fillText(formatAxisTick(value, axisY.step), padding - 8, y);
+    ctx.fillText(formatAxisTick(value, axisY.step, axisY.field || scatterFields.y), padding - 8, y);
   });
 
   ctx.textAlign = "center";
@@ -1471,9 +1578,31 @@ function normalizeHeaders(obj) {
 
 function bootstrapFilters() {
   numericFields.forEach(field => {
-    const values = state.rows.map(row => row._values[field]).filter(val => val !== null);
-    const absoluteMin = values.length ? Math.floor(Math.min(...values)) : 0;
-    const absoluteMax = values.length ? Math.ceil(Math.max(...values)) : 100;
+    const meta = getFieldMeta(field);
+    const values = state.rows
+      .map(row => row._values[field])
+      .filter(val => Number.isFinite(val));
+    const hasValues = values.length > 0;
+    let absoluteMin;
+    let absoluteMax;
+    if (hasValues) {
+      const minValue = Math.min(...values);
+      const maxValue = Math.max(...values);
+      absoluteMin = Math.floor(minValue);
+      absoluteMax = Math.ceil(maxValue);
+    } else {
+      absoluteMin = Number.isFinite(meta.defaultMin) ? meta.defaultMin : 0;
+      absoluteMax = Number.isFinite(meta.defaultMax) ? meta.defaultMax : 100;
+    }
+    if (!Number.isFinite(absoluteMin)) {
+      absoluteMin = Number.isFinite(meta.defaultMin) ? meta.defaultMin : 0;
+    }
+    if (!Number.isFinite(absoluteMax)) {
+      absoluteMax = Number.isFinite(meta.defaultMax) ? meta.defaultMax : 100;
+    }
+    if (absoluteMin > absoluteMax) {
+      [absoluteMin, absoluteMax] = [absoluteMax, absoluteMin];
+    }
     state.filters[field] = {
       absoluteMin,
       absoluteMax,
@@ -1669,10 +1798,28 @@ function setupEvents() {
         normalized._idx = idx;
         normalized._values = {};
         numericFields.forEach(field => {
-          normalized._values[field] = getNumericValue(normalized[field]);
+          const meta = getFieldMeta(field);
+          let rawValue;
+          if (meta && typeof meta.extract === "function") {
+            rawValue = meta.extract(normalized);
+            if (rawValue !== undefined) {
+              normalized[field] = rawValue;
+            }
+          } else {
+            rawValue = normalized[field];
+          }
+          const parser = meta && typeof meta.parse === "function" ? meta.parse : getNumericValue;
+          normalized._values[field] = parser(rawValue);
         });
         normalized._cluster = null;
-        normalized._haystack = [normalized.Title, normalized.Artist, normalized.Release, normalized.Spotify_Artists]
+        normalized._haystack = [
+          normalized.Title,
+          normalized.Artist,
+          normalized.Release,
+          normalized.Spotify_Release_Date,
+          normalized.ReleaseDate,
+          normalized.Spotify_Artists
+        ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
@@ -1736,7 +1883,7 @@ function setupEvents() {
     state.knn.dimensions[field] = nextState;
     button.classList.toggle("active", nextState);
     button.setAttribute("aria-pressed", nextState ? "true" : "false");
-    log(`${field} ${nextState ? "enabled" : "disabled"}.`, "ok");
+    log(`${getFieldLabel(field)} ${nextState ? "enabled" : "disabled"}.`, "ok");
     if (state.clusters.ready) {
       resetClusterState();
       log("Cleared existing clusters after dimension change. Re-run K-means to update.", "ok");
