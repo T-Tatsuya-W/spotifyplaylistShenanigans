@@ -4,6 +4,8 @@ const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const numericFields = ["BPM", "Energy", "Dance", "Valence", "Acoustic", "Popularity"];
 const scatterFields = { x: "Valence", y: "Energy" };
+const CLUSTER_COUNT = 6;
+const clusterColors = ["#ef4444", "#f97316", "#facc15", "#10b981", "#3b82f6", "#8b5cf6"];
 
 const dom = {
   log: document.getElementById("log"),
@@ -26,7 +28,11 @@ const dom = {
   scatter: document.getElementById("scatterPlot"),
   scatterTooltip: document.getElementById("scatterTooltip"),
   scatterKnnBtn: document.getElementById("scatterKnnBtn"),
-  scatterSelectionLabel: document.getElementById("scatterSelectionLabel")
+  scatterSelectionLabel: document.getElementById("scatterSelectionLabel"),
+  runClustersBtn: document.getElementById("runClustersBtn"),
+  clusterStatus: document.getElementById("clusterStatus"),
+  clusterLegend: document.getElementById("clusterLegend"),
+  createClusterPlaylistsBtn: document.getElementById("createClusterPlaylistsBtn")
 };
 
 const state = {
@@ -55,6 +61,13 @@ const state = {
     lastTapId: null,
     lastTapTime: 0,
     skipNextDblClick: false
+  },
+  clusters: {
+    ready: false,
+    counts: Array(CLUSTER_COUNT).fill(0),
+    sampleSize: 0,
+    actualK: 0,
+    skipped: 0
   }
 };
 
@@ -340,6 +353,205 @@ function updateSelectedCount() {
   scheduleScatterRender();
 }
 
+function updateClusterControls() {
+  if (dom.runClustersBtn) {
+    dom.runClustersBtn.disabled = !state.rows.length;
+  }
+  if (dom.createClusterPlaylistsBtn) {
+    const hasToken = Boolean(localStorage.getItem("access_token"));
+    dom.createClusterPlaylistsBtn.disabled = !(state.clusters.ready && hasToken);
+  }
+}
+
+function updateClusterUi() {
+  if (dom.clusterStatus) {
+    if (!state.clusters.ready) {
+      dom.clusterStatus.textContent = "No clusters yet.";
+    } else {
+      const { actualK, sampleSize, skipped } = state.clusters;
+      const parts = [
+        `${actualK} cluster${actualK === 1 ? "" : "s"}`,
+        `${sampleSize} track${sampleSize === 1 ? "" : "s"}`
+      ];
+      if (skipped) parts.push(`${skipped} skipped`);
+      dom.clusterStatus.textContent = `K-means: ${parts.join(" • ")}`;
+    }
+  }
+  if (dom.clusterLegend) {
+    if (!state.clusters.ready) {
+      dom.clusterLegend.classList.add("cluster-legend--empty");
+      dom.clusterLegend.textContent = "Run K-means to colour the scatter plot.";
+    } else {
+      dom.clusterLegend.classList.remove("cluster-legend--empty");
+      dom.clusterLegend.innerHTML = clusterColors.map((color, idx) => {
+        const count = state.clusters.counts[idx] || 0;
+        return `<div class="cluster-chip"><span class="chip-swatch" style="background:${color}"></span>Cluster ${idx + 1}<span class="chip-count">${count}</span></div>`;
+      }).join("");
+    }
+  }
+  updateClusterControls();
+}
+
+function resetClusterState() {
+  state.rows.forEach(row => {
+    row._cluster = null;
+  });
+  state.clusters.ready = false;
+  state.clusters.counts = Array(CLUSTER_COUNT).fill(0);
+  state.clusters.sampleSize = 0;
+  state.clusters.actualK = 0;
+  state.clusters.skipped = 0;
+  state.scatter.dirty = true;
+  updateClusterUi();
+}
+
+function runKMeansClustering() {
+  if (!state.rows.length) {
+    log("Load a CSV before running clustering.", "err");
+    return;
+  }
+  if (dom.runClustersBtn) dom.runClustersBtn.disabled = true;
+
+  try {
+    const completeRows = [];
+    let skipped = 0;
+    state.rows.forEach(row => {
+      const vector = [];
+      let hasNull = false;
+      for (const field of numericFields) {
+        const val = row._values[field];
+        if (val === null) {
+          hasNull = true;
+          break;
+        }
+        vector.push(val);
+      }
+      if (hasNull) {
+        row._cluster = null;
+        skipped++;
+        return;
+      }
+      completeRows.push({ row, vector });
+    });
+
+    if (!completeRows.length) {
+      resetClusterState();
+      log("No tracks have complete numeric data for clustering.", "err");
+      return;
+    }
+
+    const dims = numericFields.length;
+    const means = new Array(dims).fill(0);
+    completeRows.forEach(item => {
+      for (let d = 0; d < dims; d++) means[d] += item.vector[d];
+    });
+    for (let d = 0; d < dims; d++) means[d] /= completeRows.length;
+
+    const stds = new Array(dims).fill(0);
+    completeRows.forEach(item => {
+      for (let d = 0; d < dims; d++) {
+        const diff = item.vector[d] - means[d];
+        stds[d] += diff * diff;
+      }
+    });
+    for (let d = 0; d < dims; d++) stds[d] = Math.sqrt(stds[d] / completeRows.length) || 1;
+
+    const normalized = completeRows.map(item => item.vector.map((val, d) => (val - means[d]) / stds[d]));
+    const actualK = Math.min(CLUSTER_COUNT, normalized.length);
+
+    const indices = normalized.map((_, idx) => idx);
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const centroids = [];
+    for (let i = 0; i < actualK; i++) {
+      const idx = indices[i % indices.length];
+      centroids.push([...normalized[idx]]);
+    }
+
+    const assignments = new Array(normalized.length).fill(0);
+    let changed = true;
+    let iter = 0;
+    const maxIter = 100;
+    while (changed && iter < maxIter) {
+      changed = false;
+      iter++;
+      for (let i = 0; i < normalized.length; i++) {
+        const vector = normalized[i];
+        let bestCluster = assignments[i];
+        let bestDist = Infinity;
+        for (let c = 0; c < actualK; c++) {
+          const centroid = centroids[c];
+          let dist = 0;
+          for (let d = 0; d < dims; d++) {
+            const diff = vector[d] - centroid[d];
+            dist += diff * diff;
+          }
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestCluster = c;
+          }
+        }
+        if (assignments[i] !== bestCluster) {
+          assignments[i] = bestCluster;
+          changed = true;
+        }
+      }
+
+      const sums = Array.from({ length: actualK }, () => new Array(dims).fill(0));
+      const counts = new Array(actualK).fill(0);
+      for (let i = 0; i < normalized.length; i++) {
+        const cluster = assignments[i];
+        const vector = normalized[i];
+        counts[cluster]++;
+        for (let d = 0; d < dims; d++) {
+          sums[cluster][d] += vector[d];
+        }
+      }
+      for (let c = 0; c < actualK; c++) {
+        if (counts[c] === 0) {
+          const idx = Math.floor(Math.random() * normalized.length);
+          centroids[c] = [...normalized[idx]];
+          changed = true;
+        } else {
+          for (let d = 0; d < dims; d++) {
+            centroids[c][d] = sums[c][d] / counts[c];
+          }
+        }
+      }
+    }
+
+    const counts = Array(CLUSTER_COUNT).fill(0);
+    state.rows.forEach(row => {
+      row._cluster = null;
+    });
+    completeRows.forEach((item, idx) => {
+      const cluster = assignments[idx];
+      item.row._cluster = cluster;
+      counts[cluster]++;
+    });
+
+    state.clusters.ready = true;
+    state.clusters.counts = counts;
+    state.clusters.sampleSize = completeRows.length;
+    state.clusters.actualK = actualK;
+    state.clusters.skipped = skipped;
+    state.scatter.dirty = true;
+    updateClusterUi();
+    scheduleScatterRender(true);
+
+    const summary = `K-means assigned ${actualK} cluster${actualK === 1 ? "" : "s"} to ${completeRows.length} track${completeRows.length === 1 ? "" : "s"}` +
+      (skipped ? ` (${skipped} skipped)` : "") + ".";
+    log(summary, "ok");
+  } catch (err) {
+    console.error(err);
+    log(`Clustering failed: ${err.message}`, "err");
+  } finally {
+    updateClusterControls();
+  }
+}
+
 let filterListenersAttached = false;
 function buildFilters() {
   dom.filtersContainer.innerHTML = "";
@@ -489,13 +701,17 @@ function computeScatterPoints() {
     if (xVal === null || yVal === null) return;
     const x = padding + ((xVal - rangeX.absoluteMin) / spanX) * plotSize;
     const y = size - padding - ((yVal - rangeY.absoluteMin) / spanY) * plotSize;
+    const cluster = Number.isInteger(row._cluster) && row._cluster >= 0 && row._cluster < CLUSTER_COUNT ? row._cluster : null;
+    const clusterColor = cluster !== null ? clusterColors[cluster] : null;
     points.push({
       x,
       y,
       rowId: row._idx,
       label: `${row.Title} • ${row.Artist || row.Spotify_Artists || "Unknown"}`,
       selected: state.selected.has(row._idx),
-      idx
+      idx,
+      cluster,
+      clusterColor
     });
   });
 
@@ -551,17 +767,30 @@ function renderScatter() {
   ctx.fillText("Valence", size / 2, size - 12);
 
   points.forEach(point => {
-    ctx.beginPath();
     const isHover = point.rowId === state.scatter.hoverId;
     const isFocused = point.rowId === state.scatter.lastActivatedId;
     const radius = isFocused ? 9 : isHover ? 8 : 6;
+    const baseColor = point.clusterColor || (point.selected ? "#1db954" : "rgba(16,18,26,0.65)");
+
+    ctx.beginPath();
     ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-    ctx.fillStyle = point.selected ? "#1db954" : "rgba(16,18,26,0.65)";
+    ctx.fillStyle = baseColor;
     ctx.globalAlpha = isHover || isFocused ? 1 : 0.85;
     ctx.fill();
-    if (isFocused) {
+    ctx.globalAlpha = 1;
+
+    if (point.selected) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius + 1, 0, Math.PI * 2);
       ctx.lineWidth = 2;
-      ctx.strokeStyle = point.selected ? "#0d7a3a" : "#1db954";
+      ctx.strokeStyle = "rgba(17,23,41,0.85)";
+      ctx.stroke();
+    }
+    if (isFocused) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius + 2, 0, Math.PI * 2);
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = point.clusterColor || "#111827";
       ctx.stroke();
     }
   });
@@ -683,6 +912,23 @@ function bootstrapFilters() {
   attachFilterListeners();
 }
 
+async function addTracksInChunks(playlistId, uris, logPrefix = "") {
+  if (!uris.length) return;
+  const chunkSize = 100;
+  let addedCount = 0;
+  for (let i = 0; i < uris.length; i += chunkSize) {
+    const batch = uris.slice(i, i + chunkSize);
+    const addResp = await apiFetch(`/playlists/${playlistId}/tracks`, {
+      method: "POST",
+      body: JSON.stringify({ uris: batch })
+    });
+    if (!addResp.ok) throw new Error(JSON.stringify(addResp.json));
+    addedCount += batch.length;
+    const prefix = logPrefix ? `${logPrefix} ` : "";
+    log(`${prefix}Added ${addedCount}/${uris.length} track(s)…`, "ok");
+  }
+}
+
 async function createPlaylistAndAddTracks() {
   try {
     const playlistName = dom.playlistName.value.trim() || "PKCE Demo Playlist";
@@ -711,22 +957,75 @@ async function createPlaylistAndAddTracks() {
     const playlistId = newPl.json.id;
     log(`Created: ${newPl.json.name}`, "ok");
     log(`Adding ${selectedUris.length} track(s) to playlist…`);
-    const chunkSize = 100;
-    let addedCount = 0;
-    for (let i = 0; i < selectedUris.length; i += chunkSize) {
-      const batch = selectedUris.slice(i, i + chunkSize);
-      const addResp = await apiFetch(`/playlists/${playlistId}/tracks`, {
-        method: "POST",
-        body: JSON.stringify({ uris: batch })
-      });
-      if (!addResp.ok) throw new Error(JSON.stringify(addResp.json));
-      addedCount += batch.length;
-      log(`Added ${addedCount}/${selectedUris.length} track(s)…`, "ok");
-    }
+    await addTracksInChunks(playlistId, selectedUris);
     log(`Added ${selectedUris.length} track(s) successfully!`, "ok");
   } catch (err) {
     log(`Error: ${err.message}`, "err");
     console.error(err);
+  }
+}
+
+async function createClusterPlaylists() {
+  if (!state.clusters.ready) {
+    log("Run K-means before creating cluster playlists.", "err");
+    return;
+  }
+  if (dom.createClusterPlaylistsBtn) dom.createClusterPlaylistsBtn.disabled = true;
+
+  try {
+    const baseName = dom.playlistName.value.trim() || "PKCE Demo Playlist";
+    const clusterUris = Array.from({ length: CLUSTER_COUNT }, () => []);
+    let missingUris = 0;
+    state.rows.forEach(row => {
+      const cluster = row._cluster;
+      if (!Number.isInteger(cluster) || cluster < 0 || cluster >= CLUSTER_COUNT) return;
+      const uri = row.Spotify_URI;
+      if (uri && uri.length > 0) clusterUris[cluster].push(uri);
+      else missingUris++;
+    });
+
+    const totalTracks = clusterUris.reduce((sum, group) => sum + group.length, 0);
+    if (!totalTracks) {
+      log("No clustered tracks with Spotify URIs are available.", "err");
+      return;
+    }
+
+    log("Fetching your profile (/me)…");
+    const me = await apiFetch("/me");
+    if (!me.ok) throw new Error(JSON.stringify(me.json));
+    const userId = me.json.id;
+    log(`Hello ${me.json.display_name || userId}!`, "ok");
+
+    for (let i = 0; i < CLUSTER_COUNT; i++) {
+      const uris = clusterUris[i];
+      const playlistName = `${baseName} #${i + 1}`;
+      log(`Creating playlist "${playlistName}" for cluster ${i + 1} (${uris.length} track${uris.length === 1 ? "" : "s"})…`);
+      const newPl = await apiFetch(`/users/${encodeURIComponent(userId)}/playlists`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: playlistName,
+          description: `Cluster ${i + 1} generated by Spotify CSV Browser`,
+          public: false
+        })
+      });
+      if (!newPl.ok) throw new Error(JSON.stringify(newPl.json));
+      const playlistId = newPl.json.id;
+      if (uris.length) {
+        await addTracksInChunks(playlistId, uris, `Cluster ${i + 1}:`);
+        log(`Cluster ${i + 1}: added ${uris.length} track(s) successfully!`, "ok");
+      } else {
+        log(`Cluster ${i + 1}: playlist created with no tracks.`, "");
+      }
+    }
+
+    if (missingUris) {
+      log(`${missingUris} track${missingUris === 1 ? "" : "s"} lacked Spotify URIs and were skipped.`, "err");
+    }
+  } catch (err) {
+    log(`Cluster playlist creation failed: ${err.message}`, "err");
+    console.error(err);
+  } finally {
+    updateClusterControls();
   }
 }
 
@@ -744,6 +1043,12 @@ function resetFilters() {
 function setupEvents() {
   dom.loginBtn.addEventListener("click", beginLogin);
   dom.createPlaylistBtn.addEventListener("click", createPlaylistAndAddTracks);
+  if (dom.createClusterPlaylistsBtn) {
+    dom.createClusterPlaylistsBtn.addEventListener("click", createClusterPlaylists);
+  }
+  if (dom.runClustersBtn) {
+    dom.runClustersBtn.addEventListener("click", runKMeansClustering);
+  }
 
   dom.loadCsvBtn.addEventListener("click", async () => {
     const path = dom.csvPath.value.trim() || "songs.csv";
@@ -757,12 +1062,14 @@ function setupEvents() {
         numericFields.forEach(field => {
           normalized._values[field] = getNumericValue(normalized[field]);
         });
+        normalized._cluster = null;
         normalized._haystack = [normalized.Title, normalized.Artist, normalized.Release, normalized.Spotify_Artists]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
         return normalized;
       });
+      resetClusterState();
       state.selected.clear();
       state.search = dom.filterInput.value.trim().toLowerCase();
       state.scatter.dirty = true;
@@ -917,10 +1224,12 @@ async function initAuth() {
     setAuthStatus("Not logged in");
     log("CSV features work without login. Log in to create playlists.", "");
   }
+  updateClusterControls();
 }
 
 buildKnnControls();
 attachFilterListeners();
+updateClusterUi();
 setupEvents();
 initAuth();
 updateSelectedCount();

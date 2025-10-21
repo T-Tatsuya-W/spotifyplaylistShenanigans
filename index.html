@@ -26,6 +26,7 @@
         <div class="control-row">
           <input id="playlistName" type="text" placeholder="Playlist name" value="PKCE Demo Playlist" />
           <button id="createPlaylistBtn" disabled>Create &amp; Add Selected Tracks</button>
+          <button id="createClusterPlaylistsBtn" disabled>Create 6 Cluster Playlists</button>
         </div>
       </div>
     </header>
@@ -40,12 +41,19 @@
           </div>
         </div>
         <div class="scatter-actions">
-          <button id="scatterKnnBtn" type="button" disabled>Find neighbours</button>
-          <span id="scatterSelectionLabel" class="status">Tap a point to enable neighbour search.</span>
+          <div class="control-row gap-10">
+            <button id="runClustersBtn" type="button" disabled>Run 6-way K-means</button>
+            <button id="scatterKnnBtn" type="button" disabled>Find neighbours</button>
+          </div>
+          <div class="status-row">
+            <span id="scatterSelectionLabel" class="status">Tap a point to enable neighbour search.</span>
+            <span id="clusterStatus" class="status">No clusters yet.</span>
+          </div>
         </div>
         <span class="scatter-label">Tap points to toggle selection • Double-tap (or use the button) to fetch KNN neighbours</span>
       </div>
       <canvas id="scatterPlot"></canvas>
+      <div id="clusterLegend" class="cluster-legend cluster-legend--empty">Run K-means to colour the scatter plot.</div>
       <div id="scatterTooltip" class="scatter-tooltip"></div>
     </section>
 
