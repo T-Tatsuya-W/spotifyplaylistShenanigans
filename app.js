@@ -6,6 +6,10 @@ const numericFields = ["BPM", "Energy", "Dance", "Valence", "Acoustic", "Popular
 const scatterFields = { x: "Valence", y: "Energy" };
 const CLUSTER_COUNT = 6;
 const clusterColors = ["#ef4444", "#f97316", "#facc15", "#10b981", "#3b82f6", "#8b5cf6"];
+const SCATTER_MAX_SIZE = 820;
+const SCATTER_VIEWPORT_RATIO = 0.8;
+const SCATTER_VIEWPORT_CAP = 720;
+const SCATTER_PADDING = 42;
 
 const dom = {
   log: document.getElementById("log"),
@@ -75,7 +79,8 @@ const state = {
     sampleSize: 0,
     actualK: 0,
     skipped: 0,
-    descriptions: Array(CLUSTER_COUNT).fill("")
+    descriptions: Array(CLUSTER_COUNT).fill(""),
+    baseName: ""
   }
 };
 
@@ -410,6 +415,7 @@ function resetClusterState() {
   state.clusters.actualK = 0;
   state.clusters.skipped = 0;
   state.clusters.descriptions = Array(CLUSTER_COUNT).fill("");
+  state.clusters.baseName = "";
   state.scatter.dirty = true;
   updateClusterUi();
   scheduleScatterRender(true);
@@ -431,6 +437,20 @@ function runKMeansClustering() {
     }
 
     const dims = activeDims.length;
+    const dimensionSummary = activeDims.join(", ");
+    const playlistBaseName = activeDims.join(" • ");
+    if (playlistBaseName) {
+      const baseChanged = state.clusters.baseName !== playlistBaseName;
+      state.clusters.baseName = playlistBaseName;
+      if (dom.playlistName) {
+        dom.playlistName.value = playlistBaseName;
+      }
+      if (baseChanged) {
+        log(`Playlist name suggestion updated to "${playlistBaseName}".`, "ok");
+      }
+    } else {
+      state.clusters.baseName = "";
+    }
     const completeRows = [];
     const dimMins = new Array(dims).fill(Infinity);
     const dimMaxs = new Array(dims).fill(-Infinity);
@@ -617,7 +637,6 @@ function runKMeansClustering() {
     updateClusterUi();
     scheduleScatterRender(true);
 
-    const dimensionSummary = activeDims.join(", ");
     const summary = `K-means assigned ${actualK} cluster${actualK === 1 ? "" : "s"} to ${completeRows.length} track${completeRows.length === 1 ? "" : "s"}` +
       (skipped ? ` (${skipped} skipped)` : "") +
       ` using ${dims} dimension${dims === 1 ? "" : "s"} (${dimensionSummary}).`;
@@ -878,8 +897,8 @@ function computeScatterPoints() {
   const canvas = dom.scatter;
   const dpr = window.devicePixelRatio || 1;
   const parentWidth = canvas.parentElement?.clientWidth || canvas.clientWidth || 520;
-  let size = Math.min(parentWidth || 520, 720);
-  const viewportCapRaw = Math.min((window.innerHeight || 0) * 0.7, 580);
+  let size = Math.min(parentWidth || 520, SCATTER_MAX_SIZE);
+  const viewportCapRaw = Math.min((window.innerHeight || 0) * SCATTER_VIEWPORT_RATIO, SCATTER_VIEWPORT_CAP);
   if (Number.isFinite(viewportCapRaw) && viewportCapRaw > 0) {
     size = Math.min(size, viewportCapRaw);
   }
@@ -893,7 +912,7 @@ function computeScatterPoints() {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  const padding = 42;
+  const padding = SCATTER_PADDING;
   const plotSize = Math.max(size - padding * 2, 0);
   const axisX = { ...buildAxisDomain(scatterFields.x), label: scatterFields.x };
   const axisY = { ...buildAxisDomain(scatterFields.y), label: scatterFields.y };
@@ -935,7 +954,7 @@ function renderScatter() {
   } else {
     const dpr = window.devicePixelRatio || 1;
     size = dom.scatter.height / dpr || dom.scatter.clientWidth || 520;
-    padding = 42;
+    padding = SCATTER_PADDING;
     ctx = dom.scatter.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
@@ -1167,7 +1186,8 @@ async function addTracksInChunks(playlistId, uris, logPrefix = "") {
 
 async function createPlaylistAndAddTracks() {
   try {
-    const playlistName = dom.playlistName.value.trim() || "PKCE Demo Playlist";
+    const fallbackName = state.clusters.baseName || "PKCE Demo Playlist";
+    const playlistName = dom.playlistName.value.trim() || fallbackName;
     const selectedUris = Array.from(state.selected)
       .map(id => state.rows[id]?.Spotify_URI)
       .filter(uri => uri && uri.length > 0);
@@ -1209,7 +1229,8 @@ async function createClusterPlaylists() {
   if (dom.createClusterPlaylistsBtn) dom.createClusterPlaylistsBtn.disabled = true;
 
   try {
-    const baseName = dom.playlistName.value.trim() || "PKCE Demo Playlist";
+    const fallbackName = state.clusters.baseName || "PKCE Demo Playlist";
+    const baseName = dom.playlistName.value.trim() || fallbackName;
     const clusterUris = Array.from({ length: CLUSTER_COUNT }, () => []);
     let missingUris = 0;
     state.rows.forEach(row => {
