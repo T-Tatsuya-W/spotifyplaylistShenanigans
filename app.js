@@ -201,6 +201,30 @@ function getNumericValue(val) {
   return Number.isFinite(n) ? n : null;
 }
 
+function rowPassesNumericFilters(row) {
+  for (const field of numericFields) {
+    const range = state.filters[field];
+    if (!range) continue;
+    const value = row._values[field];
+    if (value === null) continue;
+    if (value < range.min || value > range.max) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getRowsMatchingFilters(includeSearch = true) {
+  const filtered = [];
+  const query = includeSearch ? state.search : "";
+  for (const row of state.rows) {
+    if (includeSearch && query && !row._haystack.includes(query)) continue;
+    if (!rowPassesNumericFilters(row)) continue;
+    filtered.push(row);
+  }
+  return filtered;
+}
+
 function escapeHTML(str) {
   return String(str ?? "")
     .replaceAll("&", "&amp;")
@@ -250,24 +274,7 @@ function refreshView() {
     return;
   }
 
-  const q = state.search;
-  const filters = state.filters;
-  const filtered = [];
-
-  for (const row of state.rows) {
-    if (q && !row._haystack.includes(q)) continue;
-    let passed = true;
-    for (const field of numericFields) {
-      const val = row._values[field];
-      if (val === null) continue;
-      const range = filters[field];
-      if (val < range.min || val > range.max) {
-        passed = false;
-        break;
-      }
-    }
-    if (passed) filtered.push(row);
-  }
+  const filtered = getRowsMatchingFilters(true);
 
   const { key, dir } = state.sort;
   filtered.sort((a, b) => {
@@ -451,11 +458,17 @@ function runKMeansClustering() {
     } else {
       state.clusters.baseName = "";
     }
+    const eligibleRows = getRowsMatchingFilters(false);
+    if (!eligibleRows.length) {
+      resetClusterState();
+      log("No tracks match the current filters. Adjust the sliders and try again.", "err");
+      return;
+    }
     const completeRows = [];
     const dimMins = new Array(dims).fill(Infinity);
     const dimMaxs = new Array(dims).fill(-Infinity);
     let skipped = 0;
-    state.rows.forEach(row => {
+    eligibleRows.forEach(row => {
       const vector = [];
       let hasNull = false;
       for (let d = 0; d < dims; d++) {
@@ -482,7 +495,7 @@ function runKMeansClustering() {
 
     if (!completeRows.length) {
       resetClusterState();
-      log("No tracks have complete data for the selected dimensions.", "err");
+      log("No tracks matching the current filters have complete data for the selected dimensions.", "err");
       return;
     }
     const means = new Array(dims).fill(0);
@@ -722,7 +735,7 @@ function calculateDistance(rowA, rowB) {
     const a = rowA._values[field];
     const b = rowB._values[field];
     if (a === null || b === null) continue;
-    const { absoluteMin: min, absoluteMax: max } = state.filters[field];
+    const { min, max } = state.filters[field];
     const span = max - min || 1;
     const normA = (a - min) / span;
     const normB = (b - min) / span;
@@ -735,13 +748,18 @@ function calculateDistance(rowA, rowB) {
 function findNearestNeighbors(rowId, exclude = new Set()) {
   const targetRow = state.rows[rowId];
   if (!targetRow) return [];
-  const distances = state.rows.map((row, idx) => ({
-    idx,
-    distance: idx === rowId ? Infinity : calculateDistance(targetRow, row)
-  }));
-  const filtered = distances.filter(item => !exclude.has(item.idx));
-  filtered.sort((a, b) => a.distance - b.distance);
-  return filtered.slice(0, state.knn.k).map(item => item.idx);
+  const eligibleRows = getRowsMatchingFilters(false);
+  const eligibleSet = new Set(eligibleRows.map(row => row._idx));
+  if (!eligibleSet.has(rowId)) return [];
+  const distances = [];
+  eligibleRows.forEach(row => {
+    const idx = row._idx;
+    if (idx === rowId || exclude.has(idx)) return;
+    const distance = calculateDistance(targetRow, row);
+    distances.push({ idx, distance });
+  });
+  distances.sort((a, b) => a.distance - b.distance);
+  return distances.slice(0, state.knn.k).map(item => item.idx);
 }
 
 function selectNeighbors(rowId) {
