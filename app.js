@@ -109,8 +109,7 @@ const clusterColors = [
 const DEFAULT_CLUSTER_COUNT = 6;
 const MIN_CLUSTER_COUNT = 1;
 const MAX_CLUSTER_COUNT = clusterColors.length;
-const SUGGESTION_SAMPLE_LIMIT = 350;
-const SUGGESTION_MAX_ITER = 40;
+const TARGET_CLUSTER_AVG_SIZE = 30;
 const CLUSTER_SUGGESTION_DEBOUNCE = 240;
 const SCATTER_MAX_SIZE = 820;
 const SCATTER_VIEWPORT_RATIO = 0.8;
@@ -737,17 +736,6 @@ function computeClusterInertia(vectors, assignments, centroids, dims) {
   return sum;
 }
 
-function sampleVectorsForSuggestion(vectors) {
-  if (vectors.length <= SUGGESTION_SAMPLE_LIMIT) return vectors;
-  const step = vectors.length / SUGGESTION_SAMPLE_LIMIT;
-  const sample = [];
-  for (let i = 0; i < SUGGESTION_SAMPLE_LIMIT; i++) {
-    const idx = Math.min(vectors.length - 1, Math.floor(i * step));
-    sample.push(vectors[idx]);
-  }
-  return sample;
-}
-
 function updateClusterSuggestionUI() {
   if (dom.clusterSuggestion) {
     const message = state.clusters.suggestionMessage || "Load a CSV to see cluster suggestions.";
@@ -789,7 +777,7 @@ function updateClusterSuggestion() {
     return;
   }
 
-  const { normalized, dims } = prep;
+  const { normalized } = prep;
   if (!normalized.length) {
     state.clusters.suggestedK = null;
     state.clusters.suggestionSampleSize = 0;
@@ -806,73 +794,58 @@ function updateClusterSuggestion() {
     return;
   }
 
-  const sample = sampleVectorsForSuggestion(normalized);
-  const maxCandidate = Math.min(MAX_CLUSTER_COUNT, sample.length);
-  if (maxCandidate < 1) {
-    state.clusters.suggestedK = null;
-    state.clusters.suggestionSampleSize = 0;
-    state.clusters.suggestionMessage = "Suggestion unavailable: not enough data.";
-    updateClusterSuggestionUI();
-    return;
+  const total = normalized.length;
+  const targetClusterSize = TARGET_CLUSTER_AVG_SIZE;
+  const maxClusters = Math.max(MIN_CLUSTER_COUNT, Math.min(MAX_CLUSTER_COUNT, total));
+  const rawEstimate = total / targetClusterSize;
+
+  const candidateSet = new Set([
+    Math.round(rawEstimate),
+    Math.floor(rawEstimate),
+    Math.ceil(rawEstimate),
+    MIN_CLUSTER_COUNT,
+    maxClusters
+  ]);
+
+  const candidates = Array.from(candidateSet)
+    .filter((value) => Number.isFinite(value))
+    .map((value) => {
+      const aboveMin = Math.max(MIN_CLUSTER_COUNT, value);
+      return Math.min(aboveMin, maxClusters);
+    });
+
+  if (!candidates.length) {
+    candidates.push(MIN_CLUSTER_COUNT);
   }
 
-  const inertias = [];
-  for (let k = 1; k <= maxCandidate; k++) {
-    const result = performKMeans(sample, dims, k, SUGGESTION_MAX_ITER);
-    inertias.push(computeClusterInertia(sample, result.assignments, result.centroids, dims));
-  }
+  let suggestedK = candidates[0];
+  let bestAvg = total / suggestedK;
+  let bestDiff = Math.abs(bestAvg - targetClusterSize);
 
-  let suggestedK = 1;
-  if (maxCandidate >= 3) {
-    const first = { x: 1, y: inertias[0] };
-    const last = { x: maxCandidate, y: inertias[maxCandidate - 1] };
-    const dx = last.x - first.x;
-    const dy = last.y - first.y;
-    const denom = Math.hypot(dx, dy) || 1;
-    let maxDistance = -Infinity;
-    for (let k = 2; k < maxCandidate; k++) {
-      const point = { x: k, y: inertias[k - 1] };
-      const px = point.x - first.x;
-      const py = point.y - first.y;
-      const distance = Math.abs(dx * py - dy * px) / denom;
-      if (distance > maxDistance) {
-        maxDistance = distance;
-        suggestedK = k;
-      }
+  for (const candidate of candidates) {
+    const avgSize = total / candidate;
+    const diff = Math.abs(avgSize - targetClusterSize);
+    const preferThis = diff < bestDiff - 1e-6 || (
+      Math.abs(diff - bestDiff) <= 1e-6 && avgSize <= targetClusterSize && bestAvg > targetClusterSize
+    );
+    if (preferThis) {
+      suggestedK = candidate;
+      bestAvg = avgSize;
+      bestDiff = diff;
     }
-    if (!Number.isFinite(maxDistance) || maxDistance <= 0) {
-      let fallbackK = 1;
-      let bestRatio = 0;
-      for (let k = 2; k <= maxCandidate; k++) {
-        const prev = inertias[k - 2];
-        const curr = inertias[k - 1];
-        const drop = prev - curr;
-        const ratio = prev !== 0 ? drop / Math.abs(prev) : 0;
-        if (ratio > bestRatio) {
-          bestRatio = ratio;
-          fallbackK = k;
-        }
-      }
-      suggestedK = fallbackK;
-    }
-  } else if (maxCandidate === 2) {
-    const drop = inertias[0] - inertias[1];
-    const ratio = inertias[0] !== 0 ? drop / Math.abs(inertias[0]) : 0;
-    suggestedK = ratio > 0.15 ? 2 : 1;
   }
 
   suggestedK = Math.max(
     MIN_CLUSTER_COUNT,
-    Math.min(suggestedK, Math.min(MAX_CLUSTER_COUNT, normalized.length))
+    Math.min(suggestedK, Math.min(MAX_CLUSTER_COUNT, total))
   );
 
-  const total = normalized.length;
-  const sampleDesc = sample.length === total
-    ? `${sample.length} track${sample.length === 1 ? "" : "s"}`
-    : `${sample.length} of ${total} tracks`;
+  const approxAvg = total / suggestedK;
+  const approxAvgStr = Number(approxAvg.toFixed(1)).toString();
+
   state.clusters.suggestedK = suggestedK;
-  state.clusters.suggestionSampleSize = sample.length;
-  state.clusters.suggestionMessage = `Suggested: ${suggestedK} cluster${suggestedK === 1 ? "" : "s"} (elbow method on ${sampleDesc}).`;
+  state.clusters.suggestionSampleSize = total;
+  state.clusters.suggestionMessage = `Suggested: ${suggestedK} cluster${suggestedK === 1 ? "" : "s"} (aiming for ~${TARGET_CLUSTER_AVG_SIZE} tracks per cluster; ${total} track${total === 1 ? "" : "s"} ≈ ${approxAvgStr} per cluster).`;
   updateClusterSuggestionUI();
 }
 
