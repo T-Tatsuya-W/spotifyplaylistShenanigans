@@ -114,6 +114,10 @@
           <label for="csvPath">CSV file</label>
           <input id="csvPath" type="text" class="mono" value="20251021.csv" />
           <button id="loadCsvBtn">Load CSV</button>
+
+          <!-- New: allow uploading a local CSV from the user's computer -->
+          <label for="csvFileInput" class="ml-8">or upload local CSV</label>
+          <input id="csvFileInput" type="file" accept=".csv,text/csv" />
         </div>
       </div>
     </details>
@@ -170,6 +174,62 @@
     </details>
   </main>
 
-  
+  <!-- New inline script: parse uploaded CSV and emit an event -->
+  <script>
+  (function() {
+    const fileInput = document.getElementById('csvFileInput');
+    const csvPathInput = document.getElementById('csvPath');
+    const loadCsvBtn = document.getElementById('loadCsvBtn');
+
+    function emitCsvUploaded(fileName, data) {
+      // store parsed CSV for other scripts
+      window.parsedCsv = data;
+      // update UI
+      if (csvPathInput) csvPathInput.value = fileName;
+      // dispatch a custom event so app.js (or other code) can react
+      document.dispatchEvent(new CustomEvent('csvUploaded', { detail: { fileName, data } }));
+      // optional visual feedback in console
+      console.info(`CSV uploaded: ${fileName} (${data.length} rows)`);
+    }
+
+    if (fileInput) {
+      fileInput.addEventListener('change', function(e) {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        // parse with PapaParse (already included on the page)
+        Papa.parse(file, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true,
+          complete: function(results) {
+            emitCsvUploaded(file.name, results.data);
+          },
+          error: function(err) {
+            console.error('Error parsing CSV:', err);
+            alert('Error parsing CSV file. See console for details.');
+          }
+        });
+      });
+    }
+
+    // If the existing app listens for a load button, keep compatibility:
+    // when Load CSV is clicked, if a parsedCsv is present, dispatch csvUploaded again.
+    if (loadCsvBtn) {
+      loadCsvBtn.addEventListener('click', function(e) {
+        if (window.parsedCsv && csvPathInput && csvPathInput.value) {
+          // prevent default path-based loading only if a local file is already parsed
+          e.preventDefault();
+          emitCsvUploaded(csvPathInput.value, window.parsedCsv);
+        }
+        // otherwise allow existing app.js handler to proceed (which likely reads csvPath)
+      });
+    }
+
+    // Optional: expose a helper to programmatically load parsed CSV
+    window.getParsedCsv = function() { return window.parsedCsv || null; };
+
+  })();
+  </script>
+
 </body>
 </html>
