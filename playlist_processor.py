@@ -20,7 +20,7 @@ import re
 import json
 import time
 import shutil
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Tuple
 import pandas as pd
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
@@ -76,7 +76,7 @@ class PlaylistDatabaseBuilder:
             print(f"❌ Failed to connect to Spotify API: {e}")
             sys.exit(1)
     
-    def extract_html_data(self, html_file_path: str) -> List[Dict]:
+    def extract_html_data(self, html_file_path: str) -> Tuple[List[Dict], Optional[str]]:
         """
         Extract song data from Sort Your Music HTML file
         
@@ -84,7 +84,7 @@ class PlaylistDatabaseBuilder:
             html_file_path (str): Path to HTML file
             
         Returns:
-            List[Dict]: List of song dictionaries
+            (List[Dict], Optional[str]): List of song dictionaries and detected playlist URL (if any)
         """
         print(f"📄 Extracting data from: {html_file_path}")
         
@@ -95,6 +95,13 @@ class PlaylistDatabaseBuilder:
             html_content = file.read()
         
         soup = BeautifulSoup(html_content, 'html.parser')
+        
+        # Try to find a Spotify playlist link inside the single-playlist area
+        playlist_url = None
+        playlist_link = soup.find('a', id='playlist-title')
+        if playlist_link and playlist_link.get('href'):
+            playlist_url = playlist_link.get('href').strip()
+            print(f"   🔗 Detected playlist URL in HTML: {playlist_url}")
         
         # Find the song table
         table = soup.find('table', {'id': 'song-table'})
@@ -139,8 +146,8 @@ class PlaylistDatabaseBuilder:
                     
                     songs.append(song_data)
         
-        print(f"   📊 Extracted {len(songs)} tracks")
-        return songs
+        print(f"   📊 Extracted {len(songs)} tracks (playlist_url={'found' if playlist_url else 'not found'})")
+        return songs, playlist_url
     
     def clean_search_query(self, artist: str, title: str) -> str:
         """Clean artist and title for better Spotify search results"""
@@ -221,46 +228,152 @@ class PlaylistDatabaseBuilder:
             
         return None
     
-    def enrich_with_spotify_data(self, songs: List[Dict]) -> List[Dict]:
+    # NEW: helper to extract playlist id from various spotify URLs/URIs
+    def extract_playlist_id(self, playlist_url: str) -> Optional[str]:
+        """
+        Extract playlist ID from a Spotify playlist URL or URI.
+        Examples:
+            https://open.spotify.com/playlist/<id>
+            spotify:playlist:<id>
+        """
+        if not playlist_url:
+            return None
+        # spotify URI
+        m = re.search(r'spotify:playlist:([A-Za-z0-9]+)', playlist_url)
+        if m:
+            return m.group(1)
+        # HTTP URL
+        m = re.search(r'open\.spotify\.com/playlist/([A-Za-z0-9]+)', playlist_url)
+        if m:
+            return m.group(1)
+        # Query param variant
+        m = re.search(r'playlist\/([A-Za-z0-9]+)\?', playlist_url)
+        if m:
+            return m.group(1)
+        # fallback: last path segment if looks like id
+        m = re.search(r'([A-Za-z0-9]{22,})$', playlist_url)
+        if m:
+            return m.group(1)
+        return None
+
+    # NEW: fetch all tracks for a given playlist using Spotify API (no per-track search)
+    def fetch_playlist_tracks(self, playlist_url: str) -> List[Dict]:
+        """
+        Fetch all tracks from a Spotify playlist and return a list of simplified track metadata.
+        """
+        playlist_id = self.extract_playlist_id(playlist_url)
+        if not playlist_id:
+            print(f"   ⚠️  Could not parse playlist ID from URL: {playlist_url}")
+            return []
+
+        print(f"🔗 Fetching tracks from playlist: {playlist_url}")
+        tracks = []
+        try:
+            # use pagination
+            limit = 100
+            offset = 0
+            while True:
+                results = self.sp.playlist_items(playlist_id, offset=offset, limit=limit, fields="items.track(id,name,artists,album(name,release_date),popularity,preview_url,uri,external_urls),next")
+                items = results.get('items', [])
+                for item in items:
+                    track = item.get('track')
+                    if not track:
+                        continue
+                    tracks.append({
+                        'Spotify_Track_ID': track.get('id', ''),
+                        'Spotify_URI': track.get('uri', ''),
+                        'Spotify_Track_Name': track.get('name', ''),
+                        'Spotify_Artists': ', '.join([a.get('name', '') for a in track.get('artists', [])]),
+                        'Spotify_Album': track.get('album', {}).get('name', ''),
+                        'Spotify_Release_Date': track.get('album', {}).get('release_date', ''),
+                        'Spotify_Popularity': track.get('popularity', ''),
+                        'Preview_URL': track.get('preview_url') or '',
+                        'Spotify_URL': (track.get('external_urls') or {}).get('spotify', '')
+                    })
+                if not results.get('next'):
+                    break
+                offset += limit
+            print(f"   ✅ Found {len(tracks)} tracks in playlist")
+        except Exception as e:
+            print(f"   ❌ Error fetching playlist tracks: {e}")
+        return tracks
+
+    # NEW: normalize helper used for matching
+    def _normalize(self, text: str) -> str:
+        if not text:
+            return ''
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        text = re.sub(r'\s*\(.*\)$', '', text)
+        text = re.sub(r'\s*-\s*(feat|ft|featuring).*$', '', text)
+        return ' '.join(text.split()).strip()
+
+    def enrich_with_spotify_data(self, songs: List[Dict], playlist_tracks: Optional[List[Dict]] = None) -> List[Dict]:
         """Enrich song data with Spotify information"""
         print(f"🔍 Enriching {len(songs)} tracks with Spotify data...")
         
         enriched_songs = []
         
+        # Build playlist map for quick matching if provided
+        playlist_map = {}
+        if playlist_tracks:
+            for t in playlist_tracks:
+                n_title = self._normalize(t.get('Spotify_Track_Name', ''))
+                first_artist = (t.get('Spotify_Artists') or '').split(',')[0].strip()
+                n_artist = self._normalize(first_artist)
+                key = f"{n_title}||{n_artist}"
+                playlist_map.setdefault(key, []).append(t)
+        
         for i, song in enumerate(songs):
-            artist = song.get('Artist', '')
-            title = song.get('Title', '')
+            artist = song.get('Artist', '') or song.get('Artists', '')
+            title = song.get('Title', '') or song.get('Track') or song.get('Name', '')
             
             print(f"   🎵 {i+1:2d}/{len(songs)}: {artist} - {title}")
             
-            # Search Spotify
-            spotify_data = self.search_spotify_track(artist, title)
+            # Try playlist match first
+            spotify_data = None
+            if playlist_map:
+                n_title = self._normalize(title)
+                n_artist = self._normalize((artist or '').split(',')[0].strip())
+                key = f"{n_title}||{n_artist}"
+                candidates = playlist_map.get(key, [])
+                # looser match: title-only where artist appears in artists string
+                if not candidates:
+                    for t in playlist_tracks:
+                        if self._normalize(t.get('Spotify_Track_Name', '')) == n_title:
+                            track_artists = self._normalize(t.get('Spotify_Artists', ''))
+                            if n_artist and n_artist in track_artists:
+                                candidates.append(t)
+                if candidates:
+                    spotify_data = candidates[0].copy()
+                    spotify_data['Match_Confidence'] = 'playlist'
+                    print(f"      🔗 Matched from playlist: {spotify_data.get('Spotify_Track_Name')}")
             
-            if spotify_data:
-                # Merge original song data with Spotify data
-                enriched_song = {**song, **spotify_data}
-                enriched_songs.append(enriched_song)
-                
-                confidence_icon = "🎯" if spotify_data['Match_Confidence'] == 'high' else "🔍" if spotify_data['Match_Confidence'] == 'medium' else "❓"
-                print(f"      {confidence_icon} Found: {spotify_data['Spotify_Track_Name']}")
-            else:
-                # Keep original data, mark as not found
-                enriched_song = song.copy()
-                enriched_song.update({
-                    'Spotify_Track_ID': '',
-                    'Spotify_URI': '',
-                    'Spotify_Track_Name': '',
-                    'Spotify_Artists': '',
-                    'Spotify_Album': '',
-                    'Spotify_Release_Date': '',
-                    'Spotify_Popularity': '',
-                    'Preview_URL': '',
-                    'Spotify_URL': '',
-                    'Match_Confidence': 'not_found'
-                })
-                enriched_songs.append(enriched_song)
-                print(f"      ❌ Not found")
-                self.stats['failed_matches'] += 1
+            # Fallback to search if no playlist match
+            if not spotify_data:
+                spotify_data = self.search_spotify_track(artist, title)
+                if spotify_data:
+                    conf_icon = "🎯" if spotify_data.get('Match_Confidence') == 'high' else "🔍" if spotify_data.get('Match_Confidence') == 'medium' else "❓"
+                    print(f"      {conf_icon} Found: {spotify_data.get('Spotify_Track_Name')}")
+                else:
+                    spotify_data = {
+                        'Spotify_Track_ID': '',
+                        'Spotify_URI': '',
+                        'Spotify_Track_Name': '',
+                        'Spotify_Artists': '',
+                        'Spotify_Album': '',
+                        'Spotify_Release_Date': '',
+                        'Spotify_Popularity': '',
+                        'Preview_URL': '',
+                        'Spotify_URL': '',
+                        'Match_Confidence': 'not_found'
+                    }
+                    print(f"      ❌ Not found")
+                    self.stats['failed_matches'] += 1
+            
+            # Merge original song data with Spotify data
+            enriched_song = {**song, **spotify_data}
+            enriched_songs.append(enriched_song)
             
             # Rate limiting
             time.sleep(0.1)
@@ -415,12 +528,22 @@ class PlaylistDatabaseBuilder:
                 print(f"Please save your playlist as 'Sort Your Music.html' in the current directory")
                 sys.exit(1)
             
-            # Step 1: Extract data from HTML
-            songs = self.extract_html_data(html_file_path)
+            # Step 1: Extract data from HTML (now also returns detected playlist URL)
+            songs, detected_playlist_url = self.extract_html_data(html_file_path)
             self.stats['total_processed'] = len(songs)
             
-            # Step 2: Enrich with Spotify data
-            enriched_songs = self.enrich_with_spotify_data(songs)
+            # If HTML contained a playlist link, fetch its tracks automatically.
+            playlist_tracks = []
+            if detected_playlist_url:
+                playlist_tracks = self.fetch_playlist_tracks(detected_playlist_url)
+            else:
+                # Fallback: allow user to optionally enter a playlist URL
+                playlist_url = input("Enter a Spotify playlist URL to match tracks directly (press Enter to skip): ").strip()
+                if playlist_url:
+                    playlist_tracks = self.fetch_playlist_tracks(playlist_url)
+            
+            # Step 2: Enrich with Spotify data (use playlist_tracks if available)
+            enriched_songs = self.enrich_with_spotify_data(songs, playlist_tracks=playlist_tracks)
             
             # Step 3: Update master database
             self.update_master_database(enriched_songs)
