@@ -182,21 +182,17 @@
     const loadCsvBtn = document.getElementById('loadCsvBtn');
 
     function emitCsvUploaded(fileName, data) {
-      // store parsed CSV for other scripts
-      window.parsedCsv = data;
-      // update UI
-      if (csvPathInput) csvPathInput.value = fileName;
-      // dispatch a custom event so app.js (or other code) can react
+      window.parsedCsv = data || [];
+      window._csvUploaded = true;
+      if (csvPathInput) csvPathInput.value = fileName || '';
       document.dispatchEvent(new CustomEvent('csvUploaded', { detail: { fileName, data } }));
-      // optional visual feedback in console
-      console.info(`CSV uploaded: ${fileName} (${data.length} rows)`);
+      console.info(`CSV uploaded: ${fileName} (${(data||[]).length} rows)`);
     }
 
     if (fileInput) {
       fileInput.addEventListener('change', function(e) {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
-        // parse with PapaParse (already included on the page)
         Papa.parse(file, {
           header: true,
           dynamicTyping: true,
@@ -212,22 +208,33 @@
       });
     }
 
-    // If the existing app listens for a load button, keep compatibility:
-    // when Load CSV is clicked, if a parsedCsv is present, dispatch csvUploaded again.
+    // Intercept the Load CSV button in the capture phase so we can prefer the uploaded CSV
     if (loadCsvBtn) {
       loadCsvBtn.addEventListener('click', function(e) {
-        if (window.parsedCsv && csvPathInput && csvPathInput.value) {
-          // prevent default path-based loading only if a local file is already parsed
+        // If a local CSV has been parsed, consume the click and emit the csvUploaded event
+        if (window.parsedCsv && window._csvUploaded) {
           e.preventDefault();
-          emitCsvUploaded(csvPathInput.value, window.parsedCsv);
+          // prevent any other click handlers from running (most importantly the repo-based loader)
+          e.stopImmediatePropagation && e.stopImmediatePropagation();
+          e.stopPropagation && e.stopPropagation();
+          emitCsvUploaded(csvPathInput ? csvPathInput.value || 'uploaded.csv' : 'uploaded.csv', window.parsedCsv);
+          return false;
         }
-        // otherwise allow existing app.js handler to proceed (which likely reads csvPath)
-      });
+        // Otherwise allow existing app.js behavior to proceed (loading by name)
+      }, { capture: true });
     }
 
-    // Optional: expose a helper to programmatically load parsed CSV
+    // Expose helpers and keep compatibility
     window.getParsedCsv = function() { return window.parsedCsv || null; };
+    // Allow other scripts to clear uploaded CSV if they want to force repo-load
+    window.clearUploadedCsv = function() { window.parsedCsv = null; window._csvUploaded = false; };
 
+    // Optional: if app.js prefers an explicit event to trigger loading, make sure it's fired on page load if a file was already parsed earlier
+    document.addEventListener('DOMContentLoaded', function() {
+      if (window.parsedCsv && window._csvUploaded) {
+        document.dispatchEvent(new CustomEvent('csvUploaded', { detail: { fileName: csvPathInput ? csvPathInput.value : 'uploaded.csv', data: window.parsedCsv } }));
+      }
+    });
   })();
   </script>
 
