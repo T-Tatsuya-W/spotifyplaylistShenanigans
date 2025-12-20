@@ -461,15 +461,50 @@ details.mini-fold .mini-fold-body input[type="search"] {
 .table-wrap {
   border: 1px solid var(--border);
   border-radius: 12px;
-  overflow: hidden;
+  overflow-x: auto; /* allow horizontal scroll for wide tables */
+  -webkit-overflow-scrolling: touch;
   background: #fff;
 }
 
 table {
-  width: 100%;
+  width: max-content; /* let table grow horizontally as needed */
+  min-width: 100%; /* but fill the container when smaller */
   border-collapse: collapse;
   font-size: 14px;
 }
+
+/* Ensure the table fold body doesn't clip the table's own scrollbars */
+#tableFold .fold-body {
+  overflow: visible;
+}
+
+/* Allow the outer details (table fold) to show overflow so inner .table-wrap can scroll */
+#tableFold {
+  overflow: visible;
+}
+
+/* Condense numeric columns to save horizontal space */
+.table-wrap th.right, .table-wrap td.right {
+  padding-left: 6px;
+  padding-right: 6px;
+  min-width: 56px;
+  max-width: 84px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* Slightly smaller font for dense tables */
+.table-wrap table {
+  font-size: 13px;
+}
+
+/* Column-specific truncation widths */
+.table-wrap td.col-title { max-width: 320px; }
+.table-wrap td.col-artist { max-width: 220px; }
+.table-wrap td.col-release { max-width: 280px; }
+.table-wrap td.col-genres { max-width: 195px; }
+.table-wrap td, .table-wrap th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 thead th {
   position: sticky;

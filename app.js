@@ -123,8 +123,6 @@ const dom = {
   playlistName: document.getElementById("playlistName"),
   createPlaylistBtn: document.getElementById("createPlaylistBtn"),
   loginBtn: document.getElementById("loginBtn"),
-  csvPath: document.getElementById("csvPath"),
-  loadCsvBtn: document.getElementById("loadCsvBtn"),
   filterInput: document.getElementById("filterInput"),
   selectAll: document.getElementById("selectAll"),
   deselectAllBtn: document.getElementById("deselectAllBtn"),
@@ -149,6 +147,26 @@ const dom = {
   clusterSuggestionApply: document.getElementById("clusterSuggestionApply"),
   createClusterPlaylistsBtn: document.getElementById("createClusterPlaylistsBtn")
 };
+  // optional UI control for camelot sorting
+  dom.sortByCamelot = document.getElementById("sortByCamelot");
+
+  // Parse Camelot code like '1A' or '11B' into a sortable rank (0-based). Invalid -> large number
+  function parseCamelotRank(val) {
+    if (!val && val !== 0) return 9999;
+    try {
+      const s = String(val).trim().toUpperCase();
+      const m = s.match(/^(\d{1,2})\s*([AB])$/i);
+      if (!m) return 9999;
+      const num = Number(m[1]);
+      const letter = m[2] || 'A';
+      if (!Number.isFinite(num)) return 9999;
+      // Camelot numbers typically 1-11 (sometimes 12). We'll just compute generically
+      const idx = (num - 1) * 2 + (letter === 'B' ? 1 : 0);
+      return idx;
+    } catch (err) {
+      return 9999;
+    }
+  }
 
 const state = {
   rows: [],
@@ -425,26 +443,45 @@ function refreshView() {
 function renderTable() {
   const rows = state.view;
   if (!rows.length) {
-    dom.csvBody.innerHTML = `<tr><td colspan="11" class="muted">No rows match the current filters.</td></tr>`;
+    dom.csvBody.innerHTML = `<tr><td colspan="18" class="muted">No rows match the current filters.</td></tr>`;
     updateSortIndicators();
     updateSelectAllState();
     return;
   }
 
   const html = rows.map(row => {
+    const TITLE_MAX = 33;
+    const ARTIST_MAX = 24;
+    const RELEASE_MAX = 36;
+    const GENRES_MAX = 22; // reduced to ~3/4 of previous 30
+
+    function trunc(text, max) {
+      if (text === null || text === undefined) return "";
+      const s = String(text);
+      if (s.length <= max) return s;
+      return s.slice(0, max - 1).trimEnd() + "\u2026"; // ellipsis
+    }
+
     const spotifyUrl = row.Spotify_URL || (row.Spotify_Track_ID ? `https://open.spotify.com/track/${row.Spotify_Track_ID}` : "");
     const checked = state.selected.has(row._idx) ? "checked" : "";
     return `<tr data-row-id="${row._idx}">
       <td><input type="checkbox" class="rowCheckbox" data-row-id="${row._idx}" ${checked} /></td>
-      <td><button type="button" class="knn-btn" title="Find similar tracks">🔍</button> ${escapeHTML(row.Title)}</td>
-      <td>${escapeHTML(row.Artist || row.Spotify_Artists)}</td>
-      <td>${escapeHTML(row.Release || row.Spotify_Release_Date)}</td>
+      <td class="col-title" title="${escapeHTML(row.Title || '')}"><button type="button" class="knn-btn" title="Find similar tracks">🔍</button> ${escapeHTML(trunc(row.Title, TITLE_MAX))}</td>
+      <td class="col-artist" title="${escapeHTML(row.Artist || row.Spotify_Artists || '')}">${escapeHTML(trunc(row.Artist || row.Spotify_Artists, ARTIST_MAX))}</td>
+      <td class="col-release" title="${escapeHTML(row.Release || row.Spotify_Release_Date || '')}">${escapeHTML(trunc(row.Release || row.Spotify_Release_Date, RELEASE_MAX))}</td>
       <td class="right">${escapeHTML(row.BPM)}</td>
       <td class="right">${escapeHTML(row.Energy)}</td>
       <td class="right">${escapeHTML(row.Dance)}</td>
       <td class="right">${escapeHTML(row.Valence)}</td>
       <td class="right">${escapeHTML(row.Acoustic)}</td>
       <td class="right">${escapeHTML(row.Popularity)}</td>
+      <td class="col-genres" title="${escapeHTML(row.Genres || '')}">${escapeHTML(trunc(row.Genres, GENRES_MAX))}</td>
+      <td class="right">${escapeHTML(row.Speech)}</td>
+      <td class="right">${escapeHTML(row.Live)}</td>
+      <td class="right">${escapeHTML(row.Loud)}</td>
+      <td>${escapeHTML(row.Key)}</td>
+      <td>${escapeHTML(row.Time_Signature)}</td>
+      <td>${escapeHTML(row.Camelot)}</td>
       <td>${spotifyUrl ? `<a class="link" href="${escapeHTML(spotifyUrl)}" target="_blank" rel="noopener">Open</a>` : ""}</td>
     </tr>`;
   }).join("");
@@ -1527,26 +1564,77 @@ function handleScatterDblClick(event) {
 }
 
 async function loadCsv(path) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     if (!window.Papa) return reject(new Error("Papa Parse failed to load."));
-    Papa.parse(path, {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      dynamicTyping: false,
-      complete: (res) => resolve(res.data),
-      error: (err) => reject(err)
-    });
+    try {
+      const resp = await fetch(path);
+      if (!resp.ok) return reject(new Error(`Failed to fetch ${path}: ${resp.statusText}`));
+      const ab = await resp.arrayBuffer();
+      const td = new TextDecoder('utf-8');
+      const text = td.decode(ab);
+      window.Papa.parse(text, {
+        header: true,
+        skipEmptyLines: true,
+        dynamicTyping: false,
+        complete: (res) => resolve(res.data),
+        error: (err) => reject(err)
+      });
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
 function normalizeHeaders(obj) {
-  const map = {};
+  const out = {};
+  if (!obj || typeof obj !== 'object') return out;
+  // copy keys with whitespace normalized to underscores
   Object.keys(obj).forEach(k => {
-    const nk = k.replace(/\s+/g, "_");
-    map[nk] = obj[k];
+    const nk = String(k).trim().replace(/\s+/g, "_");
+    out[nk] = obj[k];
   });
-  return map;
+
+  // map common aliases to canonical field names expected by the app
+  const aliases = {
+    Title: ['title', 'song', 'track', 'spotify_track_name', 'spotify_track', 'name'],
+    Artist: ['artist', 'artists', 'spotify_artists', 'artist_name'],
+    Release: ['release', 'album', 'album_date', 'spotify_release_date'],
+    BPM: ['bpm'],
+    Energy: ['energy'],
+    Dance: ['dance'],
+    Valence: ['valence', 'happy'],
+    Acoustic: ['acoustic', 'acousticness'],
+    Popularity: ['popularity'],
+    Spotify_Track_ID: ['spotify_track_id', 'spotifytrackid', 'spotify id', 'spotify_id', 'track_id', 'id'],
+    Spotify_URI: ['spotify_uri', 'spotify_uri', 'spotify_url', 'spotifyurl'],
+    Spotify_URL: ['spotify_url', 'spotifyurl', 'open_url', 'url'],
+    Spotify_Artists: ['spotify_artists', 'spotifyartists'],
+    Genres: ['genres', 'genre', 'parent_genres', 'parent genres'],
+    Speech: ['speech'],
+    Live: ['live'],
+    Loud: ['loud', 'loud_(db)', 'loud_db', 'loud (db)'],
+    Key: ['key'],
+    Time_Signature: ['time_signature', 'time signature', 'time_sig', 'time sig'],
+    Camelot: ['camelot']
+  };
+
+  const keysLower = Object.keys(out).reduce((acc, k) => {
+    acc[k.toLowerCase()] = k; return acc;
+  }, {});
+
+  Object.keys(aliases).forEach(canonical => {
+    const list = aliases[canonical];
+    for (const a of list) {
+      const foundKey = keysLower[a.toLowerCase()];
+      if (foundKey !== undefined) {
+        // only set if not already present to avoid overwriting real values
+        if (out[canonical] === undefined) out[canonical] = out[foundKey];
+        break;
+      }
+    }
+  });
+
+  return out;
 }
 
 function bootstrapFilters() {
@@ -1608,9 +1696,22 @@ async function createPlaylistAndAddTracks() {
   try {
     const fallbackName = state.clusters.baseName || "PKCE Demo Playlist";
     const playlistName = dom.playlistName.value.trim() || fallbackName;
-    const selectedUris = Array.from(state.selected)
-      .map(id => state.rows[id]?.Spotify_URI)
-      .filter(uri => uri && uri.length > 0);
+    // Build list of selected tracks with camelot info
+    const selected = Array.from(state.selected)
+      .map(id => ({ id, row: state.rows[id] }))
+      .filter(x => x.row && (x.row.Spotify_URI || x.row.Spotify_Track_ID));
+
+    let selectedUrisWithMeta = selected.map(x => ({
+      uri: x.row.Spotify_URI || `spotify:track:${x.row.Spotify_Track_ID}`,
+      camelotRank: parseCamelotRank(x.row.Camelot || x.row.Camelot && String(x.row.Camelot)),
+      title: x.row.Title || ''
+    }));
+
+    if (dom.sortByCamelot && dom.sortByCamelot.checked) {
+      selectedUrisWithMeta.sort((a, b) => a.camelotRank - b.camelotRank || a.title.localeCompare(b.title));
+    }
+
+    const selectedUris = selectedUrisWithMeta.map(x => x.uri).filter(Boolean);
     if (!selectedUris.length) {
       log("No tracks selected.", "err");
       return;
@@ -1661,9 +1762,10 @@ async function createClusterPlaylists() {
     state.rows.forEach(row => {
       const cluster = row._cluster;
       if (!Number.isInteger(cluster) || cluster < 0 || cluster >= clusterCount) return;
-      const uri = row.Spotify_URI;
-      if (uri && uri.length > 0) clusterUris[cluster].push(uri);
-      else missingUris++;
+      const uri = row.Spotify_URI || (row.Spotify_Track_ID ? `spotify:track:${row.Spotify_Track_ID}` : null);
+      if (uri && uri.length > 0) {
+        clusterUris[cluster].push({ uri, camelotRank: parseCamelotRank(row.Camelot) });
+      } else missingUris++;
     });
 
     const totalTracks = clusterUris.reduce((sum, group) => sum + group.length, 0);
@@ -1680,7 +1782,11 @@ async function createClusterPlaylists() {
 
     const clusterDescriptions = state.clusters.descriptions || [];
     for (let i = 0; i < clusterCount; i++) {
-      const uris = clusterUris[i];
+      let urisWithMeta = clusterUris[i] || [];
+      if (dom.sortByCamelot && dom.sortByCamelot.checked) {
+        urisWithMeta = urisWithMeta.sort((a, b) => (a.camelotRank || 9999) - (b.camelotRank || 9999));
+      }
+      const uris = urisWithMeta.map(x => x.uri);
       const playlistName = `${baseName} #${i + 1}`;
       log(`Creating playlist "${playlistName}" for cluster ${i + 1} (${uris.length} track${uris.length === 1 ? "" : "s"})…`);
       const description = clusterDescriptions[i] && clusterDescriptions[i].trim().length
@@ -1761,62 +1867,111 @@ function setupEvents() {
     });
   }
 
-  dom.loadCsvBtn.addEventListener("click", async () => {
-    const path = dom.csvPath.value.trim() || "songs.csv";
-    try {
-      log(`Loading ${path}…`);
-      const data = await loadCsv(path);
-      state.rows = data.map((row, idx) => {
-        const normalized = normalizeHeaders(row);
-        normalized._idx = idx;
-        normalized._values = {};
-        numericFields.forEach(field => {
-          const meta = getFieldMeta(field);
-          let rawValue;
-          if (meta && typeof meta.extract === "function") {
-            rawValue = meta.extract(normalized);
-            if (rawValue !== undefined) {
-              normalized[field] = rawValue;
-            }
-          } else {
-            rawValue = normalized[field];
-          }
-          const parser = meta && typeof meta.parse === "function" ? meta.parse : getNumericValue;
-          normalized._values[field] = parser(rawValue);
-        });
-        normalized._cluster = null;
-        normalized._haystack = [
-          normalized.Title,
-          normalized.Artist,
-          normalized.Release,
-          normalized.Spotify_Release_Date,
-          normalized.ReleaseDate,
-          normalized.Spotify_Artists
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return normalized;
-      });
-      resetClusterState();
-      state.selected.clear();
-      state.search = dom.filterInput.value.trim().toLowerCase();
-      state.scatter.dirty = true;
-      bootstrapFilters();
-      refreshView();
-      scheduleClusterSuggestionUpdate();
-      log(`Loaded ${state.rows.length} rows.`, "ok");
-    } catch (err) {
-      console.error(err);
-      log(`Failed to load CSV: ${err.message}`, "err");
-    }
-  });
+  if (dom.loadCsvBtn) {
+    dom.loadCsvBtn.addEventListener("click", async () => {
+      const path = (dom.csvPath && dom.csvPath.value) ? dom.csvPath.value.trim() : "songs.csv";
+      try {
+        log(`Loading ${path}…`);
+        const data = await loadCsv(path);
+        await processParsedCsv(data, path);
+        resetClusterState();
+        state.selected.clear();
+        state.search = dom.filterInput.value.trim().toLowerCase();
+        state.scatter.dirty = true;
+        bootstrapFilters();
+        refreshView();
+        scheduleClusterSuggestionUpdate();
+        log(`Loaded ${state.rows.length} rows.`, "ok");
+      } catch (err) {
+        console.error(err);
+        log(`Failed to load CSV: ${err.message}`, "err");
+      }
+    });
+  }
 
   dom.filterInput.addEventListener("input", debounce(event => {
     state.search = event.target.value.trim().toLowerCase();
     scheduleViewRefresh();
     scheduleClusterSuggestionUpdate();
   }, 180));
+
+  // Support uploaded CSVs emitted by the page (`csvUploaded` event).
+  // This lets users upload local CSVs via the file input in `index.html`.
+  async function processParsedCsv(data, sourceName) {
+    if (!Array.isArray(data) || !data.length) {
+      log('Parsed CSV contained no rows.', 'err');
+      return;
+    }
+    const fileName = sourceName || 'uploaded.csv';
+    log(`Processing CSV: ${fileName}`);
+
+    state.rows = data.map((row, idx) => {
+      const normalized = normalizeHeaders(row || {});
+
+      if ((normalized.Valence === undefined || normalized.Valence === null || String(normalized.Valence).trim() === '') && (normalized.Happy !== undefined)) {
+        normalized.Valence = normalized.Happy;
+      }
+
+      const hasUri = normalized.Spotify_URI || normalized.SpotifyUrl || normalized.Spotify_URL;
+      if (!hasUri) {
+        const idKey = Object.keys(normalized).find(k => /spotify.*track.*id/i.test(k) || /^spotify_track_id$/i.test(k) || /spotify.*id$/i.test(k));
+        if (idKey && normalized[idKey]) {
+          const id = String(normalized[idKey]).trim();
+          if (id) {
+            normalized.Spotify_Track_ID = id;
+            normalized.Spotify_URI = `spotify:track:${id}`;
+            normalized.Spotify_URL = `https://open.spotify.com/track/${id}`;
+          }
+        }
+      }
+
+      normalized._idx = idx;
+      normalized._values = {};
+      numericFields.forEach(field => {
+        const meta = getFieldMeta(field);
+        let rawValue;
+        if (meta && typeof meta.extract === "function") {
+          rawValue = meta.extract(normalized);
+          if (rawValue !== undefined) normalized[field] = rawValue;
+        } else {
+          rawValue = normalized[field];
+        }
+        const parser = meta && typeof meta.parse === "function" ? meta.parse : getNumericValue;
+        normalized._values[field] = parser(rawValue);
+      });
+      normalized._cluster = null;
+      normalized._haystack = [
+        normalized.Title,
+        normalized.Artist,
+        normalized.Release,
+        normalized.Spotify_Release_Date,
+        normalized.ReleaseDate,
+        normalized.Spotify_Artists
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return normalized;
+    });
+
+    resetClusterState();
+    state.selected.clear();
+    state.search = dom.filterInput.value.trim().toLowerCase();
+    state.scatter.dirty = true;
+    bootstrapFilters();
+    refreshView();
+    scheduleClusterSuggestionUpdate();
+    log(`Loaded ${state.rows.length} rows from CSV.`, 'ok');
+  }
+
+  document.addEventListener('csvUploaded', function(e) {
+    const fileName = (e && e.detail && e.detail.fileName) || 'uploaded.csv';
+    const data = (e && e.detail && e.detail.data) || [];
+    processParsedCsv(data, fileName).catch(err => {
+      console.error(err);
+      log(`Failed to process uploaded CSV: ${err && err.message}`, 'err');
+    });
+  });
 
   dom.selectAll.addEventListener("change", event => {
     if (event.target.checked) {

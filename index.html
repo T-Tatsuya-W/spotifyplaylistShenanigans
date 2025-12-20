@@ -15,6 +15,9 @@
       <div>
         <h1>Spotify CSV Browser</h1>
         <p>Load a CSV, explore tracks visually, and push your favourites into a Spotify playlist.</p>
+        <p>1) Download a CSV of a playlist from the sorter site:</p>
+        <p><a href="https://www.chosic.com/spotify-playlist-sorter/" target="_blank" rel="noopener">https://www.chosic.com/spotify-playlist-sorter/</a></p>
+        <p>2) Return here and upload that CSV using the uploader below.</p>
       </div>
       <div class="auth-bar">
         <div class="control-row gap-10-16">
@@ -27,9 +30,18 @@
           <input id="playlistName" type="text" placeholder="Playlist name" value="PKCE Demo Playlist" />
           <button id="createPlaylistBtn" disabled>Create &amp; Add Selected Tracks</button>
           <button id="createClusterPlaylistsBtn" disabled>Create Cluster Playlists</button>
+          <label style="display:flex;align-items:center;gap:8px;margin-left:12px"><input id="sortByCamelot" type="checkbox" /> Sort by Camelot when creating playlists</label>
         </div>
       </div>
     </header>
+
+    <!-- Simple CSV uploader placed directly under header -->
+    <div id="csvUploader" class="card">
+      <div class="control-row" style="align-items:center; gap:12px;">
+        <label for="csvFileInput" style="font-weight:700; margin:0;">Upload CSV</label>
+        <input id="csvFileInput" type="file" accept=".csv,text/csv" />
+      </div>
+    </div>
 
     <section class="card scatter-card">
       <div class="scatter-header">
@@ -104,23 +116,7 @@
       </div>
     </details>
 
-    <details class="fold" id="csvBrowserFold" open>
-      <summary>
-        CSV Browser
-        <span class="muted small-text">Tip: double-click the scatter to grab similar songs.</span>
-      </summary>
-      <div class="fold-body">
-        <div class="control-row">
-          <label for="csvPath">CSV file</label>
-          <input id="csvPath" type="text" class="mono" value="251125.csv" />
-          <button id="loadCsvBtn">Load CSV</button>
-
-          <!-- New: allow uploading a local CSV from the user's computer -->
-          <label for="csvFileInput" class="ml-8">or upload local CSV</label>
-          <input id="csvFileInput" type="file" accept=".csv,text/csv" />
-        </div>
-      </div>
-    </details>
+    <!-- old CSV browser removed (moved to top) -->
 
     <details class="fold" id="tableFold" open>
       <summary>
@@ -154,6 +150,13 @@
                 <th data-key="Valence" data-sort="" class="right">Valence</th>
                 <th data-key="Acoustic" data-sort="" class="right">Acoustic</th>
                 <th data-key="Popularity" data-sort="" class="right">Popularity</th>
+                <th data-key="Genres" data-sort="">Genres</th>
+                <th data-key="Speech" data-sort="" class="right">Speech</th>
+                <th data-key="Live" data-sort="" class="right">Live</th>
+                <th data-key="Loud" data-sort="" class="right">Loud (Db)</th>
+                <th data-key="Key" data-sort="">Key</th>
+                <th data-key="Time_Signature" data-sort="">Time Sig</th>
+                <th data-key="Camelot" data-sort="">Camelot</th>
                 <th data-key="Spotify_URL" data-sort="">Open</th>
               </tr>
             </thead>
@@ -178,13 +181,10 @@
   <script>
   (function() {
     const fileInput = document.getElementById('csvFileInput');
-    const csvPathInput = document.getElementById('csvPath');
-    const loadCsvBtn = document.getElementById('loadCsvBtn');
 
     function emitCsvUploaded(fileName, data) {
       window.parsedCsv = data || [];
       window._csvUploaded = true;
-      if (csvPathInput) csvPathInput.value = fileName || '';
       document.dispatchEvent(new CustomEvent('csvUploaded', { detail: { fileName, data } }));
       console.info(`CSV uploaded: ${fileName} (${(data||[]).length} rows)`);
     }
@@ -208,33 +208,10 @@
       });
     }
 
-    // Intercept the Load CSV button in the capture phase so we can prefer the uploaded CSV
-    if (loadCsvBtn) {
-      loadCsvBtn.addEventListener('click', function(e) {
-        // If a local CSV has been parsed, consume the click and emit the csvUploaded event
-        if (window.parsedCsv && window._csvUploaded) {
-          e.preventDefault();
-          // prevent any other click handlers from running (most importantly the repo-based loader)
-          e.stopImmediatePropagation && e.stopImmediatePropagation();
-          e.stopPropagation && e.stopPropagation();
-          emitCsvUploaded(csvPathInput ? csvPathInput.value || 'uploaded.csv' : 'uploaded.csv', window.parsedCsv);
-          return false;
-        }
-        // Otherwise allow existing app.js behavior to proceed (loading by name)
-      }, { capture: true });
-    }
-
     // Expose helpers and keep compatibility
     window.getParsedCsv = function() { return window.parsedCsv || null; };
     // Allow other scripts to clear uploaded CSV if they want to force repo-load
     window.clearUploadedCsv = function() { window.parsedCsv = null; window._csvUploaded = false; };
-
-    // Optional: if app.js prefers an explicit event to trigger loading, make sure it's fired on page load if a file was already parsed earlier
-    document.addEventListener('DOMContentLoaded', function() {
-      if (window.parsedCsv && window._csvUploaded) {
-        document.dispatchEvent(new CustomEvent('csvUploaded', { detail: { fileName: csvPathInput ? csvPathInput.value : 'uploaded.csv', data: window.parsedCsv } }));
-      }
-    });
   })();
   </script>
 
