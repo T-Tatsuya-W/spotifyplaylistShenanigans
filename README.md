@@ -57,6 +57,25 @@ Your CSV should include columns like:
 
 Additional columns are preserved and searchable.
 
+## CSV Header Mapping and Release Date Detection
+
+Album names and release dates are handled separately to avoid misclassification:
+
+- Release (album name) maps only to `Release`/`Album` headers.
+- Date-like headers map to `Spotify_Release_Date`: `Spotify Release Date`, `Release Date`, `Album Date`, etc.
+- The Release Date filter uses explicit date fields first (`Spotify_Release_Date`, `Release_Date`, `Album_Date`). Numeric album names (e.g., `224`) are not treated as dates unless they contain an ISO date like `YYYY-MM-DD`.
+
+Example row:
+
+```
+#,Song,Artist,Popularity,BPM,Genres,Parent Genres,Album,Album Date,Time,Dance,Energy,Acoustic,Instrumental,Happy,Speech,Live,Loud (Db),Key,Time Signature,Added At,Spotify Track Id,Album Label,Camelot,ISRC
+24,"Lips Hips Kiss","KISS OF LIFE",66,85,"k-pop","Pop","224",2025-06-09,03:09,74,60,5,0,85,0,10,-5,C♯/D♭,4,2025-12-20,5Q4DLsIx0Fl0IDCCWHsLlH,"S2 ENTERTAINMENT INC.",3B,KRA382502944
+```
+
+Behavior:
+- Album column shows `224`.
+- Release Date filter recognizes `2025-06-09`.
+
 ## Usage
 
 ### Loading Data

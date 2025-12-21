@@ -13,11 +13,21 @@ const fieldMeta = {
     defaultMin: 0,
     defaultMax: 0,
     extract: (row) => {
-      const candidates = [row.Release, row.Spotify_Release_Date, row.release_date, row.Release_Date];
+      // Prefer explicit date fields; fall back to Release only if it contains an ISO date
+      const candidates = [
+        row.Spotify_Release_Date,
+        row.Release_Date,
+        row.release_date,
+        row.Album_Date,
+        row.Release
+      ];
       for (const value of candidates) {
-        if (value && String(value).trim().length) {
-          return String(value).trim();
-        }
+        if (!value) continue;
+        const s = String(value).trim();
+        if (!s) continue;
+        // If coming from the album name (Release), only accept if it contains YYYY-MM-DD
+        if (value === row.Release && !/\d{4}-\d{2}-\d{2}/.test(s)) continue;
+        return s;
       }
       return "";
     },
@@ -1598,7 +1608,10 @@ function normalizeHeaders(obj) {
   const aliases = {
     Title: ['title', 'song', 'track', 'spotify_track_name', 'spotify_track', 'name'],
     Artist: ['artist', 'artists', 'spotify_artists', 'artist_name'],
-    Release: ['release', 'album', 'album_date', 'spotify_release_date'],
+    // Only album/release name. Do not include date aliases here.
+    Release: ['release', 'album'],
+    // Canonical date field capturing common variants
+    Spotify_Release_Date: ['spotify_release_date', 'release_date', 'release date', 'album_date', 'album date', 'Album_Date'],
     BPM: ['bpm'],
     Energy: ['energy'],
     Dance: ['dance'],
