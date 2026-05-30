@@ -153,14 +153,9 @@ function renderPlaylists() {
 
   dom.playlistList.innerHTML = state.playlists.map(playlist => {
     const checked = state.selected.has(playlist.id) ? "checked" : "";
-    const image = playlist.images && playlist.images[0] ? playlist.images[0].url : "";
     return `<label class="playlist-card">
       <input type="checkbox" class="playlist-checkbox" value="${escapeHTML(playlist.id)}" ${checked} />
-      ${image ? `<img src="${escapeHTML(image)}" alt="" />` : '<div class="playlist-art-placeholder">♪</div>'}
-      <span class="playlist-copy">
-        <strong>${escapeHTML(playlist.name)}</strong>
-        <span class="muted small-text">${escapeHTML(playlist.owner?.display_name || "Spotify")} • ${playlist.tracks?.total ?? 0} tracks</span>
-      </span>
+      <span class="playlist-name">${escapeHTML(playlist.name)}</span>
     </label>`;
   }).join("");
   updateControls();
