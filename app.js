@@ -187,11 +187,11 @@ const state = {
   knn: {
     k: 5,
     dimensions: {
-      BPM: true,
+      BPM: false,
       Energy: true,
       Dance: true,
       Valence: true,
-      Acoustic: false,
+      Acoustic: true,
       Popularity: false,
       ReleaseDate: false
     }

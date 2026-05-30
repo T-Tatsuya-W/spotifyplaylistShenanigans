@@ -640,6 +640,17 @@ a.link {
   overflow-y: auto;
   padding-right: 4px;
   overscroll-behavior: contain;
+  min-height: 0;
+}
+
+.table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow-x: auto; /* allow horizontal scroll for wide tables */
+  overflow-y: auto; /* allow vertical scroll for long track lists */
+  max-height: min(60vh, 640px);
+  -webkit-overflow-scrolling: touch;
+  background: #fff;
 }
 
 .empty-state {
@@ -652,7 +663,7 @@ a.link {
 
 .playlist-card {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -671,10 +682,9 @@ a.link {
 
 .playlist-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-weight: 600;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .result-card {
