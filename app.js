@@ -218,6 +218,7 @@ const state = {
     actualK: 0,
     skipped: 0,
     descriptions: Array(DEFAULT_CLUSTER_COUNT).fill(""),
+    titleCodes: Array(DEFAULT_CLUSTER_COUNT).fill(""),
     baseName: "",
     suggestedK: null,
     suggestionSampleSize: 0,
@@ -605,6 +606,7 @@ function resetClusterState() {
   state.clusters.actualK = 0;
   state.clusters.skipped = 0;
   state.clusters.descriptions = Array(state.clusters.targetK).fill("");
+  state.clusters.titleCodes = Array(state.clusters.targetK).fill("");
   state.clusters.baseName = "";
   state.scatter.dirty = true;
   updateClusterUi();
@@ -1025,6 +1027,7 @@ function runKMeansClustering() {
     const formatField = (field) => getFieldLabel(field).toLowerCase();
 
     const clusterDescriptions = Array(state.clusters.targetK).fill("");
+    const clusterTitleCodes = Array(state.clusters.targetK).fill("");
     for (let c = 0; c < state.clusters.targetK; c++) {
       if (c >= actualK) {
         clusterDescriptions[c] = "Cluster was not generated for the current sample.";
@@ -1034,13 +1037,14 @@ function runKMeansClustering() {
         clusterDescriptions[c] = "No tracks assigned to this cluster.";
         continue;
       }
-      const phrases = activeDims.map((field, dimIdx) => {
+      const levels = activeDims.map((field, dimIdx) => {
         const average = clusterSums[c][dimIdx] / clusterCounts[c];
         const stats = dimensionThresholds[dimIdx];
-        const level = describeLevel(average, stats);
-        return `${level} ${formatField(field)}`;
+        return describeLevel(average, stats);
       });
+      const phrases = levels.map((level, dimIdx) => `${level} ${formatField(activeDims[dimIdx])}`);
       clusterDescriptions[c] = `${phrases.join(", ")}.`;
+      clusterTitleCodes[c] = levels.map(level => level.charAt(0).toUpperCase()).join("");
     }
 
     state.clusters.ready = true;
@@ -1049,6 +1053,7 @@ function runKMeansClustering() {
     state.clusters.actualK = actualK;
     state.clusters.skipped = skipped;
     state.clusters.descriptions = clusterDescriptions;
+    state.clusters.titleCodes = clusterTitleCodes;
     state.scatter.dirty = true;
     updateClusterUi();
     scheduleScatterRender(true);
@@ -1794,13 +1799,17 @@ async function createClusterPlaylists() {
     log(`Hello ${me.json.display_name || userId}!`, "ok");
 
     const clusterDescriptions = state.clusters.descriptions || [];
+    const clusterTitleCodes = state.clusters.titleCodes || [];
     for (let i = 0; i < clusterCount; i++) {
       let urisWithMeta = clusterUris[i] || [];
       if (dom.sortByCamelot && dom.sortByCamelot.checked) {
         urisWithMeta = urisWithMeta.sort((a, b) => (a.camelotRank || 9999) - (b.camelotRank || 9999));
       }
       const uris = urisWithMeta.map(x => x.uri);
-      const playlistName = `${baseName} #${i + 1}`;
+      const titleCode = clusterTitleCodes[i] && clusterTitleCodes[i].trim().length
+        ? ` ${clusterTitleCodes[i].trim()}`
+        : "";
+      const playlistName = `${baseName} #${i + 1}${titleCode}`;
       log(`Creating playlist "${playlistName}" for cluster ${i + 1} (${uris.length} track${uris.length === 1 ? "" : "s"})…`);
       const description = clusterDescriptions[i] && clusterDescriptions[i].trim().length
         ? clusterDescriptions[i]

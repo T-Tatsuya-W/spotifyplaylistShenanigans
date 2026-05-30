@@ -741,6 +741,15 @@ a.link {
     width: 100%;
   }
 
+  .playlist-card {
+    grid-template-columns: auto 48px minmax(0, 1fr);
+  }
+
+  .playlist-card img,
+  .playlist-art-placeholder {
+    width: 48px;
+    height: 48px;
+  }
 
   .match-playlists li {
     align-items: stretch;
