@@ -1,5 +1,5 @@
 const CLIENT_ID = "2a1b848324a04242b06d3a1d0e5c16d9";
-const SCOPES = "playlist-modify-public playlist-modify-private user-read-private";
+const SCOPES = "playlist-modify-public playlist-modify-private playlist-read-private user-read-private";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
