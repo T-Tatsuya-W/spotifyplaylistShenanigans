@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Spotify Playlist Filter</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="filter.js" defer></script>
+</head>
+<body>
+  <main class="app">
+    <header class="app-header card">
+      <div>
+        <div class="title-row">
+          <h1>Spotify Playlist Filter</h1>
+          <a class="nav-button" href="index.html">Spotify CSV Browser</a>
+        </div>
+        <p>Select public Spotify playlists from your account and find songs that appear in more than one playlist.</p>
+        <p>Matches use Spotify track IDs where possible, plus fuzzy song-title and artist comparisons to catch alternate releases.</p>
+      </div>
+      <div class="auth-bar">
+        <div class="control-row gap-10-16">
+          <button id="loginBtn">Log in with Spotify</button>
+          <span id="authStatus" class="muted">Not logged in</span>
+          <span class="muted">•</span>
+          <span id="playlistStatus" class="muted">No playlists loaded</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <h2>Public playlists</h2>
+          <p class="muted small-text">Choose two or more playlists, then run the filter to find repeated songs.</p>
+        </div>
+        <div class="action-group">
+          <button id="refreshPlaylistsBtn" type="button" class="ghost-button" disabled>Refresh playlists</button>
+          <button id="filterBtn" type="button" disabled>FILTER</button>
+        </div>
+      </div>
+      <div id="playlistList" class="playlist-list">
+        <div class="empty-state muted">Log in with Spotify to load your public playlists.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <h2>Matched songs</h2>
+          <p class="muted small-text">Use Ignore on a playlist occurrence if a fuzzy match is not actually the same song.</p>
+        </div>
+        <span id="resultStatus" class="muted small-text">No filter run yet.</span>
+      </div>
+      <div id="resultsList" class="results-list">
+        <div class="empty-state muted">Select playlists and run FILTER to see songs that appear in multiple playlists.</div>
+      </div>
+    </section>
+
+    <details class="fold" id="logFold">
+      <summary>
+        Log
+        <span class="muted small-text">Spotify sync and matching information appears here.</span>
+      </summary>
+      <div class="fold-body">
+        <div id="log"></div>
+      </div>
+    </details>
+  </main>
+</body>
+</html>
